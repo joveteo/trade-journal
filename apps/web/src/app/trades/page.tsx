@@ -12,7 +12,7 @@ import {
   type ColumnDef,
 } from "@tanstack/react-table";
 import { ArrowUpDown, Check, Columns3, Download, Tag, Trash2 } from "lucide-react";
-import { dayKeyOf, type TradeMetrics } from "@luxalgo/journal-core";
+import { dayKeyOf, optionVerticalStats, type TradeMetrics } from "@luxalgo/journal-core";
 import { FilterBar, useFilters } from "@/components/filter-bar";
 import { Pnl } from "@/components/pnl";
 import { MonetaryValue } from "@/components/privacy";
@@ -132,12 +132,18 @@ function Trades() {
         id: "symbol",
         accessorKey: "symbol",
         header: "Symbol",
-        cell: ({ row, getValue }) => (
-          <span className="flex items-center gap-2 font-medium">
-            {getValue<string>()}
-            <span className="text-xs text-muted-foreground">{row.original.direction}</span>
-          </span>
-        ),
+        cell: ({ row, getValue }) => {
+          const stats = optionVerticalStats(row.original);
+          return (
+            <span className="flex items-center gap-2 font-medium">
+              {getValue<string>()}
+              <span className="text-xs text-muted-foreground">
+                {row.original.direction}
+                {stats ? ` ${stats.structure}` : ""}
+              </span>
+            </span>
+          );
+        },
       },
       {
         id: "status",
@@ -194,6 +200,54 @@ function Trades() {
         },
         header: "Net ROI",
         cell: ({ getValue }) => <span className="tnum">{fmtPercent(getValue<number>(), 2)}</span>,
+      },
+      {
+        id: "width",
+        accessorFn: (row) => optionVerticalStats(row)?.width ?? null,
+        header: "Width",
+        cell: ({ getValue }) => {
+          const width = getValue<number | null>();
+          return <span className="tnum text-muted-foreground">{width === null ? "–" : width}</span>;
+        },
+      },
+      {
+        id: "maxProfit",
+        accessorFn: (row) => optionVerticalStats(row)?.maxProfit ?? null,
+        header: "Max profit",
+        cell: ({ getValue }) => {
+          const value = getValue<number | null>();
+          return (
+            <span className="tnum">
+              {value === null ? "–" : <MonetaryValue>{fmtMoney(value)}</MonetaryValue>}
+            </span>
+          );
+        },
+      },
+      {
+        id: "maxLoss",
+        accessorFn: (row) => optionVerticalStats(row)?.maxLoss ?? null,
+        header: "Max loss",
+        cell: ({ getValue }) => {
+          const value = getValue<number | null>();
+          return (
+            <span className="tnum">
+              {value === null ? "–" : <MonetaryValue>{fmtMoney(value)}</MonetaryValue>}
+            </span>
+          );
+        },
+      },
+      {
+        id: "capturedMax",
+        accessorFn: (row) => optionVerticalStats(row)?.capturedMaxProfit ?? null,
+        header: "% max",
+        cell: ({ getValue }) => {
+          const value = getValue<number | null>();
+          return (
+            <span className="tnum text-muted-foreground">
+              {value === null ? "–" : fmtPercent(value, 2)}
+            </span>
+          );
+        },
       },
       {
         id: "fees",
@@ -271,7 +325,14 @@ function Trades() {
     getRowId: (row) => row.key,
     initialState: {
       sorting: [{ id: "closedAt", desc: true }],
-      columnVisibility: { fees: false, executionCount: false, rating: false },
+      columnVisibility: {
+        fees: false,
+        executionCount: false,
+        rating: false,
+        width: false,
+        maxProfit: false,
+        maxLoss: false,
+      },
     },
   });
 

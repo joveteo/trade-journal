@@ -21,24 +21,24 @@ Two validation tiers:
 - **Real file**: verified against an actual export file from a live account
   (the most valuable contribution this repo can receive).
 
-| Format                             | Kind                         | Detection                             | Cross-checked | Real file |
-| ---------------------------------- | ---------------------------- | ------------------------------------- | ------------- | --------- |
-| TradeZella                         | trades → reconstructed fills | header signature + P&L reconciliation | ✅ (partial²) | ☐         |
-| Tradervue                          | fills                        | header signature                      | ✅ (docs³)    | ☐         |
-| TradingView (paper history)        | fills                        | `Fill Price` header                   | ✅ (docs)     | ☐         |
-| MetaTrader 4 (HTML statement)      | trades → reconstructed fills | HTML + MetaTrader markers             | ☐             | ☐         |
-| Interactive Brokers (activity CSV) | fills                        | `Trades,Header` section rows          | ☐             | ☐         |
-| Interactive Brokers (Flex Query)   | fills                        | `ClientAccountID`/`Date/Time` headers | ✅¹           | ☐         |
-| Interactive Brokers (Flex XML)     | fills                        | `<FlexQueryResponse>` + `<FlexStatement>` | ☐ (fixtures) | ☐         |
-| ThinkorSwim / Schwab (statement)   | fills                        | `Account Trade History` section       | ✅¹           | ☐         |
-| NinjaTrader                        | fills                        | `Instrument`/`Action` headers         | ✅¹           | ✅ (#10)  |
-| Tradovate                          | fills (Filled only)          | `Contract`/`B/S`/`Fill Time` headers  | ✅¹           | ☐         |
-| TopstepX                           | fills (Filled only)          | `ContractName`/`ExecutePrice` headers | ✅¹           | ☐         |
-| Webull (orders, both variants)     | fills (Filled only)          | `Status`/`Filled` headers             | ✅ (docs)     | ☐         |
-| DAS Trader Pro                     | fills                        | `Symb`/`B/S` headers                  | ☐             | ☐         |
-| MetaTrader 5 (deals report)        | fills                        | HTML/CSV deal table signature         | ☐ (fixtures)  | ☐         |
-| TradingView (strategy list)        | trades → reconstructed fills | `List of trades` headers              | ☐ (fixtures)  | ☐         |
-| Generic (column mapper)            | fills                        | user-mapped                           | n/a           | n/a       |
+| Format                             | Kind                         | Detection                                 | Cross-checked | Real file |
+| ---------------------------------- | ---------------------------- | ----------------------------------------- | ------------- | --------- |
+| TradeZella                         | trades → reconstructed fills | header signature + P&L reconciliation     | ✅ (partial²) | ☐         |
+| Tradervue                          | fills                        | header signature                          | ✅ (docs³)    | ☐         |
+| TradingView (paper history)        | fills                        | `Fill Price` header                       | ✅ (docs)     | ☐         |
+| MetaTrader 4 (HTML statement)      | trades → reconstructed fills | HTML + MetaTrader markers                 | ☐             | ☐         |
+| Interactive Brokers (activity CSV) | fills                        | `Trades,Header` section rows              | ☐             | ☐         |
+| Interactive Brokers (Flex Query)   | fills                        | `ClientAccountID`/`Date/Time` headers     | ✅¹           | ☐         |
+| Interactive Brokers (Flex XML)     | fills                        | `<FlexQueryResponse>` + `<FlexStatement>` | ☐ (fixtures)  | ☐         |
+| ThinkorSwim / Schwab (statement)   | fills                        | `Account Trade History` section           | ✅¹           | ☐         |
+| NinjaTrader                        | fills                        | `Instrument`/`Action` headers             | ✅¹           | ✅ (#10)  |
+| Tradovate                          | fills (Filled only)          | `Contract`/`B/S`/`Fill Time` headers      | ✅¹           | ☐         |
+| TopstepX                           | fills (Filled only)          | `ContractName`/`ExecutePrice` headers     | ✅¹           | ☐         |
+| Webull (orders, both variants)     | fills (Filled only)          | `Status`/`Filled` headers                 | ✅ (docs)     | ☐         |
+| DAS Trader Pro                     | fills                        | `Symb`/`B/S` headers                      | ☐             | ☐         |
+| MetaTrader 5 (deals report)        | fills                        | HTML/CSV deal table signature             | ☐ (fixtures)  | ☐         |
+| TradingView (strategy list)        | trades → reconstructed fills | `List of trades` headers                  | ☐ (fixtures)  | ☐         |
+| Generic (column mapper)            | fills                        | user-mapped                               | n/a           | n/a       |
 
 ¹ [TradeNote community broker parsers](https://github.com/Eleven-Trading/TradeNote/blob/main/src/utils/brokers.js):
 real-user headers for Tradovate (`Fill Time`, `B/S`, `Filled Qty`, `Avg Fill Price`,
@@ -94,12 +94,12 @@ In IBKR Account Management, include **Trades**. **Option Exercises, Assignments 
 
 Minimum trade fields for stocks, options, and fees:
 
-| Purpose                         | Flex attributes                                                                 |
-| ------------------------------- | ------------------------------------------------------------------------------- |
-| Fill identity                   | `symbol`, `buySell`, `quantity`, `tradePrice`, `dateTime`, `ibCommission`       |
+| Purpose                         | Flex attributes                                                                  |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| Fill identity                   | `symbol`, `buySell`, `quantity`, `tradePrice`, `dateTime`, `ibCommission`        |
 | Option contract                 | `strike`, `expiry`, `putCall`, `underlyingSymbol`, `assetCategory`, `multiplier` |
-| Broker IDs (dedup / spreads)    | `transactionID`, `tradeID`, `ibExecID`, `ibOrderID`                             |
-| Expiration and assignment value | `openCloseIndicator`, `notes`, `cost`, `fifoPnlRealized`                        |
+| Broker IDs (dedup / spreads)    | `transactionID`, `tradeID`, `ibExecID`, `ibOrderID`, `brokerageOrderID`          |
+| Expiration and assignment value | `openCloseIndicator`, `notes`, `cost`, `fifoPnlRealized`                         |
 
 Without Strike, Expiry, and Put/Call, an option fill is stored on the underlying ticker and will net with stock. Activity-statement CSV uses the same contract composition when those columns are present.
 
@@ -115,7 +115,14 @@ When `OptionEAE` rows are present they close leftover quantity using Trade Price
 
 ### Spreads
 
-Verticals and other combos remain **one round-trip per contract**. Shared `ibOrderID` (or a conservative same-timestamp / underlying / expiry / quantity fallback) is stored as `strategyGroupId` so later UI can group legs. Grouping metadata does not merge P&L into a single spread row in this release.
+Verticals are journaled as **one trade**. Combo legs share `brokerageOrderID` (IBKR's per-leg `ibOrderID` values are different and are not used as the spread id). When that parent order id is missing, same-expiry opposite legs that fill together — including same-second partials of both strikes — are still paired.
+
+Direction follows the structure, not the net debit:
+
+- Selling a call vertical is **short**
+- Selling a put vertical is **long**
+
+Strike width, credit/debit, max profit, max loss, and percent of max captured are computed from the two strikes and net premium. Regulatory fees in `taxes` are included with `ibCommission` in the fill fee.
 
 ### Recovering an earlier IBKR import
 

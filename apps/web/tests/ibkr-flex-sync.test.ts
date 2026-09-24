@@ -13,8 +13,8 @@ describe("IBKR Flex sync enrichment", () => {
     const result = parseIbkrFlexSync(
       statement(`
         <Trades>
-          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260102C06000000" dateTime="20260102;100000" buySell="SELL" quantity="-1" tradePrice="2.00" ibCommission="-1.20" ibOrderID="42" tradeID="t1" openCloseIndicator="O" notes="CP" />
-          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260102C06015000" dateTime="20260102;100000" buySell="BUY" quantity="1" tradePrice="0.50" ibCommission="-1.10" ibOrderID="42" tradeID="t2" openCloseIndicator="O" notes="CP" />
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260102C06000000" dateTime="20260102;100000" buySell="SELL" quantity="-1" tradePrice="2.00" ibCommission="-1.20" ibOrderID="42" brokerageOrderID="combo-1" tradeID="t1" openCloseIndicator="O" notes="CP" />
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260102C06015000" dateTime="20260102;100000" buySell="BUY" quantity="1" tradePrice="0.50" ibCommission="-1.10" ibOrderID="43" brokerageOrderID="combo-1" tradeID="t2" openCloseIndicator="O" notes="CP" />
         </Trades>
         <OptionEAE>
           <OptionEAE accountId="U1" assetCategory="OPT" symbol="SPXW  260102C06000000" date="2026-01-02" transactionType="Expiration" quantity="1" tradePrice="0" realizedPnl="198.80" multiplier="100" />
@@ -38,16 +38,37 @@ describe("IBKR Flex sync enrichment", () => {
     expect(result.executions.slice(0, 2).map((row) => row.importMetadata?.broker)).toEqual([
       expect.objectContaining({
         orderId: "42",
+        brokerageOrderId: "combo-1",
         openCloseIndicator: "O",
         notes: "CP",
-        strategyGroupId: "ibkr-order:U1:42",
+        strategyGroupId: "ibkr-order:U1:combo-1",
       }),
-      expect.objectContaining({ strategyGroupId: "ibkr-order:U1:42" }),
+      expect.objectContaining({ orderId: "43", strategyGroupId: "ibkr-order:U1:combo-1" }),
     ]);
     expect(result.executions.slice(2).map((row) => [row.side, row.price])).toEqual([
       ["buy", 0],
       ["sell", 0],
     ]);
+  });
+
+  it("groups same-second partial fills of both vertical legs", () => {
+    const result = parseIbkrFlexSync(
+      statement(`
+        <Trades>
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251106C06800000" dateTime="20251106;104027" buySell="SELL" quantity="-1" tradePrice="1.32" ibCommission="-1.64" taxes="-0.15" transactionID="a" openCloseIndicator="O" />
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251106C06800000" dateTime="20251106;104027" buySell="SELL" quantity="-1" tradePrice="1.32" ibCommission="-0.94" taxes="-0.08" transactionID="b" openCloseIndicator="O" />
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251106C06815000" dateTime="20251106;104027" buySell="BUY" quantity="1" tradePrice="0.62" ibCommission="-1.55" taxes="-0.14" transactionID="c" openCloseIndicator="O" />
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251106C06815000" dateTime="20251106;104027" buySell="BUY" quantity="1" tradePrice="0.62" ibCommission="-0.85" taxes="-0.08" transactionID="d" openCloseIndicator="O" />
+        </Trades>
+      `),
+    );
+    expect(result.stats.identifiedSpreadOrders).toBe(1);
+    expect(result.executions.map((row) => Number(row.fee.toFixed(2)))).toEqual([
+      1.79, 1.02, 1.69, 0.93,
+    ]);
+    expect(
+      new Set(result.executions.map((row) => row.importMetadata?.broker?.strategyGroupId)).size,
+    ).toBe(1);
   });
 
   it("uses proceeds when lifecycle Trade Price is absent", () => {

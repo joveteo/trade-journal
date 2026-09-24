@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { netVerticalExecutions } from "@luxalgo/journal-core";
 import { fmtMoney } from "@/lib/utils";
 import { usePrivacy } from "./privacy";
 import { EquityArea } from "./charts/equity-area";
@@ -48,12 +49,16 @@ export function TradeChart(props: {
   height?: number;
 }) {
   const privateMode = usePrivacy();
-  if (!privateMode) return <PriceChart {...props} />;
-  const data = [...props.executions]
+  const fills = props.trade.symbol.includes(" VERTICAL")
+    ? netVerticalExecutions(props.executions)
+    : props.executions;
+  if (!privateMode)
+    return <PriceChart trade={props.trade} executions={fills} height={props.height} />;
+  const data = [...fills]
     .sort((a, b) => a.executedAt.localeCompare(b.executedAt))
     .map((fill) => ({
       t: fill.executedAt,
-      cumNetPnl: fill.price / props.trade.avgEntry - 1,
+      cumNetPnl: props.trade.avgEntry === 0 ? 0 : fill.price / props.trade.avgEntry - 1,
     }));
   return (
     <figure className="rounded-lg border bg-card p-4">

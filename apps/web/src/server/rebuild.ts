@@ -1,8 +1,11 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { buildRoundTrips, type Execution, type ProfitCalcMethod } from "@luxalgo/journal-core";
-import { db, executions, trades, accounts } from "@/db";
+import { db, executions, trades, accounts, settings } from "@/db";
 import { getMultipliers, getJournalDefaults } from "./settings";
 import { defaultRisk } from "@/lib/journal-defaults";
+
+const TRADE_MATERIALIZATION_KEY = "ibkr_vertical_materialization_version";
+const TRADE_MATERIALIZATION_VERSION = "3";
 
 /**
  * Rebuild the materialized round trips for an account from its executions.
@@ -33,17 +36,67 @@ export const rebuildAccount = (accountId: string): void => {
     method: account.profitCalcMethod as ProfitCalcMethod,
     multipliers: getMultipliers(),
   });
-  const obsolete = new Set(
-    db
-      .select({ key: trades.key })
-      .from(trades)
-      .where(eq(trades.accountId, accountId))
-      .all()
-      .map((row) => row.key),
-  );
+  const existing = db.select().from(trades).where(eq(trades.accountId, accountId)).all();
+  const existingKeys = new Set(existing.map((row) => row.key));
+  const obsolete = new Set(existingKeys);
+  const parseIds = (json: string): string[] => {
+    try {
+      const parsed = JSON.parse(json) as unknown;
+      return Array.isArray(parsed)
+        ? parsed.filter((id): id is string => typeof id === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  };
+  const existingWithIds = existing.map((row) => ({
+    row,
+    executionIds: new Set(parseIds(row.executionIdsJson)),
+  }));
+  const mergedAnnotations = (executionIds: string[]) => {
+    const nextIds = new Set(executionIds);
+    const sources = existingWithIds
+      .filter(
+        ({ executionIds: priorIds }) =>
+          priorIds.size > 0 && [...priorIds].every((id) => nextIds.has(id)),
+      )
+      .map(({ row }) => row)
+      .sort((left, right) => left.key.localeCompare(right.key));
+    if (sources.length === 0) return {};
+    const mergeArray = (values: Array<string | null>): string | null => {
+      const merged = [
+        ...new Set(
+          values.flatMap((value) => {
+            if (!value) return [];
+            try {
+              const parsed = JSON.parse(value) as unknown;
+              return Array.isArray(parsed)
+                ? parsed.filter((item): item is string => typeof item === "string")
+                : [];
+            } catch {
+              return [];
+            }
+          }),
+        ),
+      ];
+      return merged.length > 0 ? JSON.stringify(merged) : null;
+    };
+    const notes = [...new Set(sources.map((row) => row.notes).filter(Boolean))].join("\n\n");
+    return {
+      notes: notes || null,
+      tagsJson: mergeArray(sources.map((row) => row.tagsJson)),
+      mistakesJson: mergeArray(sources.map((row) => row.mistakesJson)),
+      playbookId: sources.find((row) => row.playbookId)?.playbookId ?? null,
+      rating: sources.find((row) => row.rating !== null)?.rating ?? null,
+      stopLoss: sources.find((row) => row.stopLoss !== null)?.stopLoss ?? null,
+      profitTarget: sources.find((row) => row.profitTarget !== null)?.profitTarget ?? null,
+      reviewedAt: sources.find((row) => row.reviewedAt !== null)?.reviewedAt ?? null,
+    };
+  };
   const defaults = getJournalDefaults();
   const values = trips.map((trip) => {
     obsolete.delete(trip.key);
+    const migrated = existingKeys.has(trip.key) ? {} : mergedAnnotations(trip.executionIds);
     return {
       key: trip.key,
       accountId: trip.accountId,
@@ -65,6 +118,7 @@ export const rebuildAccount = (accountId: string): void => {
       exitsJson: JSON.stringify(trip.exits),
       durationMs: trip.durationMs ?? null,
       ...defaultRisk(trip.avgEntry, trip.direction, accountId, trip.symbol, defaults),
+      ...migrated,
     };
   });
 
@@ -109,4 +163,36 @@ export const rebuildAccount = (accountId: string): void => {
         .run();
     }
   });
+};
+
+/**
+ * Rebuild existing journals once when round-trip materialization rules change.
+ * This is intentionally lazy: the first trade-backed request performs the
+ * synchronous migration, then the persisted version makes later requests free.
+ */
+export const ensureTradeMaterialization = (): void => {
+  const current = db
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, TRADE_MATERIALIZATION_KEY))
+    .get()?.value;
+  if (current === TRADE_MATERIALIZATION_VERSION) return;
+
+  const affectedAccounts = new Set(
+    db
+      .select({ accountId: executions.accountId })
+      .from(executions)
+      .all()
+      .map((row) => row.accountId),
+  );
+  for (const accountId of affectedAccounts) {
+    rebuildAccount(accountId);
+  }
+  db.insert(settings)
+    .values({ key: TRADE_MATERIALIZATION_KEY, value: TRADE_MATERIALIZATION_VERSION })
+    .onConflictDoUpdate({
+      target: settings.key,
+      set: { value: TRADE_MATERIALIZATION_VERSION },
+    })
+    .run();
 };

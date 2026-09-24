@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRoundTrips } from "../src/round-trips";
+import { buildRoundTrips, netVerticalExecutions } from "../src/round-trips";
 import { fill } from "./helpers";
 
 describe("round trips: a trade is one position cycle, flat to flat", () => {
@@ -179,6 +179,139 @@ describe("round trips: a trade is one position cycle, flat to flat", () => {
     expect(trips[0]!.grossPnl).toBe(100);
     expect(trips[0]!.contractMultiplier).toBe(100);
     expect(trips[0]!.avgEntry).toBe(2.5);
+  });
+
+  it("combines option legs that share an IBKR opening order into one vertical", () => {
+    const metadata = (id: string, order: number, strategyGroupId?: string) => ({
+      id,
+      order,
+      broker: {
+        provider: "ibkr-flex" as const,
+        kind: "trade" as const,
+        openCloseIndicator: order < 2 ? "O" : "C",
+        strategyGroupId,
+      },
+    });
+    const openedAt = "2026-09-11T11:24:44Z";
+    const closedAt = "2026-09-14T09:56:57Z";
+    const trips = buildRoundTrips([
+      fill("GOOGL 18SEP26 337.5 P", "buy", 1, 3.35, openedAt, {
+        id: "long-open",
+        assetClass: "option",
+        source: "import",
+        importMetadata: metadata("long-open", 0, "ibkr-order:U1:combo-open"),
+      }),
+      fill("GOOGL 18SEP26 340 P", "sell", 1, 4.35, openedAt, {
+        id: "short-open",
+        assetClass: "option",
+        source: "import",
+        importMetadata: metadata("short-open", 1, "ibkr-order:U1:combo-open"),
+      }),
+      fill("GOOGL 18SEP26 337.5 P", "sell", 1, 1.6, closedAt, {
+        id: "long-close",
+        assetClass: "option",
+        source: "import",
+        importMetadata: metadata("long-close", 2, "ibkr-order:U1:combo-close"),
+      }),
+      fill("GOOGL 18SEP26 340 P", "buy", 1, 2.27, closedAt, {
+        id: "short-close",
+        assetClass: "option",
+        source: "import",
+        importMetadata: metadata("short-close", 3, "ibkr-order:U1:combo-close"),
+      }),
+    ]);
+
+    expect(trips).toHaveLength(1);
+    expect(trips[0]).toMatchObject({
+      symbol: "GOOGL 18SEP26 337.5/340 P VERTICAL",
+      direction: "long",
+      status: "win",
+      quantity: 1,
+      executionCount: 4,
+    });
+    expect(trips[0]!.avgEntry).toBeCloseTo(1, 9);
+    expect(trips[0]!.avgExit).toBeCloseTo(0.67, 9);
+    expect(trips[0]!.grossPnl).toBeCloseTo(33, 9);
+    expect(trips[0]!.executionIds).toHaveLength(4);
+  });
+
+  it("treats a sold call vertical as short and a sold put vertical as long", () => {
+    const openedAt = "2025-11-06T10:40:27Z";
+    const closedAt = "2025-11-06T16:20:00Z";
+    const call = buildRoundTrips([
+      fill("SPXW 06NOV25 6800 C", "sell", 2, 1.32, openedAt, { assetClass: "option" }),
+      fill("SPXW 06NOV25 6815 C", "buy", 2, 0.62, openedAt, { assetClass: "option" }),
+      fill("SPXW 06NOV25 6800 C", "buy", 2, 0, closedAt, { assetClass: "option" }),
+      fill("SPXW 06NOV25 6815 C", "sell", 2, 0, closedAt, { assetClass: "option" }),
+    ]);
+    const put = buildRoundTrips([
+      fill("SPXW 05NOV25 6745 P", "buy", 2, 1.88, "2025-11-05T10:49:04Z", {
+        assetClass: "option",
+      }),
+      fill("SPXW 05NOV25 6760 P", "sell", 2, 3.03, "2025-11-05T10:49:04Z", {
+        assetClass: "option",
+      }),
+      fill("SPXW 05NOV25 6745 P", "sell", 2, 0, "2025-11-05T16:20:00Z", { assetClass: "option" }),
+      fill("SPXW 05NOV25 6760 P", "buy", 2, 0, "2025-11-05T16:20:00Z", { assetClass: "option" }),
+    ]);
+    expect(call).toHaveLength(1);
+    expect(call[0]).toMatchObject({
+      symbol: "SPXW 06NOV25 6800/6815 C VERTICAL",
+      direction: "short",
+      status: "win",
+      quantity: 2,
+    });
+    expect(call[0]!.avgEntry).toBeCloseTo(0.7, 9);
+    expect(put).toHaveLength(1);
+    expect(put[0]).toMatchObject({
+      symbol: "SPXW 05NOV25 6745/6760 P VERTICAL",
+      direction: "long",
+      status: "win",
+      quantity: 2,
+    });
+    expect(put[0]!.avgEntry).toBeCloseTo(1.15, 9);
+  });
+
+  it("combines same-second partial fills of both vertical legs into one trade", () => {
+    const openedAt = "2025-11-06T10:40:27Z";
+    const closedAt = "2025-11-06T16:20:00Z";
+    const trips = buildRoundTrips([
+      fill("SPXW 06NOV25 6800 C", "sell", 1, 1.32, openedAt, { id: "s1", assetClass: "option" }),
+      fill("SPXW 06NOV25 6800 C", "sell", 1, 1.32, openedAt, { id: "s2", assetClass: "option" }),
+      fill("SPXW 06NOV25 6815 C", "buy", 1, 0.62, openedAt, { id: "b1", assetClass: "option" }),
+      fill("SPXW 06NOV25 6815 C", "buy", 1, 0.62, openedAt, { id: "b2", assetClass: "option" }),
+      fill("SPXW 06NOV25 6800 C", "buy", 2, 0, closedAt, { id: "sc", assetClass: "option" }),
+      fill("SPXW 06NOV25 6815 C", "sell", 2, 0, closedAt, { id: "bc", assetClass: "option" }),
+    ]);
+    expect(trips).toHaveLength(1);
+    expect(trips[0]).toMatchObject({
+      symbol: "SPXW 06NOV25 6800/6815 C VERTICAL",
+      direction: "short",
+      quantity: 2,
+      executionCount: 6,
+    });
+  });
+
+  it("nets simultaneous vertical-leg fills into the spread premium", () => {
+    const prints = netVerticalExecutions([
+      { side: "sell", quantity: 1, price: 1.17, executedAt: "2026-09-14T10:55:53Z" },
+      { side: "buy", quantity: 1, price: 0.47, executedAt: "2026-09-14T10:55:53Z" },
+      { side: "buy", quantity: 1, price: 0, executedAt: "2026-09-14T16:20:00Z" },
+      { side: "sell", quantity: 1, price: 0, executedAt: "2026-09-14T16:20:00Z" },
+    ]);
+    expect(prints).toHaveLength(2);
+    expect(prints[0]).toMatchObject({
+      side: "sell",
+      quantity: 1,
+      executedAt: "2026-09-14T10:55:53Z",
+    });
+    expect(prints[0]!.price).toBeCloseTo(0.7, 9);
+    expect(prints[1]).toMatchObject({
+      side: "buy",
+      quantity: 1,
+      price: 0,
+      executedAt: "2026-09-14T16:20:00Z",
+    });
   });
 
   it("stock and option fills on the same underlying never net together", () => {
