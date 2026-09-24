@@ -1,0 +1,13 @@
+---
+description: Push and open PRs only on the personal fork, never LuxAlgo
+alwaysApply: true
+---
+
+# Fork-only GitHub workflow
+
+This checkout is a personal fork. Do not contribute to LuxAlgo from it.
+
+- `origin` is `joveteo/trade-journal`. Push branches only there.
+- Open pull requests only on that fork: `gh pr create --repo joveteo/trade-journal --base main`. Always pass `--repo joveteo/trade-journal`. Omitting `--repo` is not safe: `gh` defaults fork PRs to the parent repository.
+- Never pass `--repo LuxAlgo/trade-journal`. Never open, push, or file issues against LuxAlgo.
+- `upstream` is `LuxAlgo/trade-journal` for fetch only. Do not push to it.
