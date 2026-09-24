@@ -8,10 +8,10 @@ import type { ImportedExecution } from "@luxalgo/journal-importers";
 const originalDir = process.env.JOURNAL_DATA_DIR;
 const scratch = mkdtempSync(join(tmpdir(), "journal-storage-test-"));
 process.env.JOURNAL_DATA_DIR = scratch;
-const { db, accounts, executions, trades } = await import("../src/db");
+const { db, accounts, executions, trades, settings } = await import("../src/db");
 const { insertExecutions, normalizeStoredOptionExecutions } =
   await import("../src/server/executions");
-const { rebuildAccount } = await import("../src/server/rebuild");
+const { ensureTradeMaterialization, rebuildAccount } = await import("../src/server/rebuild");
 const { POST } = await import("../src/app/api/executions/route");
 const { GET: getTrade } = await import("../src/app/api/trades/[key]/route");
 const rows: ImportedExecution[] = [
@@ -218,6 +218,169 @@ describe("execution storage preserves a coherent journal", () => {
       duplicatesRemoved: 0,
     });
     expect(db.select().from(executions).all()).toHaveLength(2);
+  });
+
+  it("materializes an imported IBKR vertical as one trade", () => {
+    const row = (
+      id: string,
+      symbol: string,
+      side: "buy" | "sell",
+      price: number,
+      executedAt: string,
+      order: number,
+      openCloseIndicator: "O" | "C",
+      strategyGroupId: string,
+    ): ImportedExecution => ({
+      symbol,
+      side,
+      quantity: 1,
+      price,
+      fee: 0.5,
+      executedAt,
+      assetClass: "option",
+      importMetadata: {
+        id,
+        group: "ibkr-account:U1",
+        order,
+        broker: {
+          provider: "ibkr-flex",
+          kind: "trade",
+          openCloseIndicator,
+          strategyGroupId,
+        },
+      },
+    });
+    insertExecutions(
+      "test",
+      [
+        row(
+          "long-open",
+          "GOOGL 18SEP26 337.5 P",
+          "buy",
+          3.35,
+          "2026-09-11T11:24:44Z",
+          0,
+          "O",
+          "open-combo",
+        ),
+        row(
+          "short-open",
+          "GOOGL 18SEP26 340 P",
+          "sell",
+          4.35,
+          "2026-09-11T11:24:44Z",
+          1,
+          "O",
+          "open-combo",
+        ),
+        row(
+          "long-close",
+          "GOOGL 18SEP26 337.5 P",
+          "sell",
+          1.6,
+          "2026-09-14T09:56:57Z",
+          2,
+          "C",
+          "close-combo",
+        ),
+        row(
+          "short-close",
+          "GOOGL 18SEP26 340 P",
+          "buy",
+          2.27,
+          "2026-09-14T09:56:57Z",
+          3,
+          "C",
+          "close-combo",
+        ),
+      ],
+      "import",
+    );
+
+    const saved = db.select().from(trades).all();
+    expect(saved).toEqual([
+      expect.objectContaining({
+        symbol: "GOOGL 18SEP26 337.5/340 P VERTICAL",
+        direction: "long",
+        status: "win",
+        executionCount: 4,
+        fees: 2,
+      }),
+    ]);
+    expect(saved[0]!.grossPnl).toBeCloseTo(33, 9);
+    expect(saved[0]!.netPnl).toBeCloseTo(31, 9);
+  });
+
+  it("preserves leg annotations when a rebuild first groups an existing vertical", () => {
+    const imported = (
+      id: string,
+      symbol: string,
+      side: "buy" | "sell",
+      price: number,
+      executedAt: string,
+      order: number,
+      openCloseIndicator: "O" | "C",
+    ): ImportedExecution => ({
+      symbol,
+      side,
+      quantity: 1,
+      price,
+      fee: 0,
+      executedAt,
+      assetClass: "option",
+      importMetadata: {
+        id,
+        group: "ibkr-account:U1",
+        order,
+        broker: { provider: "ibkr-flex", kind: "trade", openCloseIndicator },
+      },
+    });
+    insertExecutions(
+      "test",
+      [
+        imported("long-open", "GOOGL 18SEP26 337.5 P", "buy", 3.35, "2026-09-11T11:24:44Z", 0, "O"),
+        imported("short-open", "GOOGL 18SEP26 340 P", "sell", 4.35, "2026-09-11T11:34:44Z", 1, "O"),
+        imported(
+          "long-close",
+          "GOOGL 18SEP26 337.5 P",
+          "sell",
+          1.6,
+          "2026-09-14T09:56:57Z",
+          2,
+          "C",
+        ),
+        imported("short-close", "GOOGL 18SEP26 340 P", "buy", 2.27, "2026-09-14T09:56:57Z", 3, "C"),
+      ],
+      "import",
+    );
+    const legs = db.select().from(trades).all();
+    expect(legs).toHaveLength(2);
+    db.update(trades)
+      .set({ notes: "Vertical review", tagsJson: '["spread"]' })
+      .where(eq(trades.key, legs[0]!.key))
+      .run();
+
+    for (const execution of db.select().from(executions).all()) {
+      if (!execution.executedAt.startsWith("2026-09-11")) continue;
+      const metadata = JSON.parse(execution.importMetadataJson!) as {
+        broker: { strategyGroupId?: string };
+      };
+      metadata.broker.strategyGroupId = "open-combo";
+      db.update(executions)
+        .set({ importMetadataJson: JSON.stringify(metadata) })
+        .where(eq(executions.id, execution.id))
+        .run();
+    }
+    db.delete(settings).where(eq(settings.key, "ibkr_vertical_materialization_version")).run();
+    ensureTradeMaterialization();
+
+    expect(db.select().from(trades).all()).toEqual([
+      expect.objectContaining({
+        symbol: "GOOGL 18SEP26 337.5/340 P VERTICAL",
+        notes: "Vertical review",
+        tagsJson: '["spread"]',
+      }),
+    ]);
   });
 
   it("saves Markdown notes with manual trades and preserves them through a rebuild and retry", async () => {

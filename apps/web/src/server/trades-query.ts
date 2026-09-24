@@ -7,6 +7,7 @@ import {
 } from "@luxalgo/journal-core";
 import { getTimeZone, getMultipliers, getJournalDefaults } from "./settings";
 import { db, trades } from "@/db";
+import { ensureTradeMaterialization } from "./rebuild";
 
 export type TradeFilters = AnalysisFilters & { accountIds?: string[] };
 
@@ -188,6 +189,7 @@ const sqlConditions = (filters: TradeFilters, timeZone: string): SQL[] => {
 export const queryTrades = (
   filters: TradeFilters = {},
 ): { rows: TradeRow[]; trades: AnnotatedTrade[] } => {
+  ensureTradeMaterialization();
   const effective = { ...filters, accounts: filters.accounts ?? filters.accountIds?.join(",") };
   const timeZone = getTimeZone();
   const all = db
@@ -208,6 +210,7 @@ export const queryTrades = (
 
 /** Analytics reads omit notes and the large per-exit JSON payload. */
 export const queryTradeModels = (filters: TradeFilters = {}): AnnotatedTrade[] => {
+  ensureTradeMaterialization();
   const effective = { ...filters, accounts: filters.accounts ?? filters.accountIds?.join(",") };
   const timeZone = getTimeZone();
   const config = context();
@@ -221,5 +224,7 @@ export const queryTradeModels = (filters: TradeFilters = {}): AnnotatedTrade[] =
     .filter((trade) => matchesFilters(trade, effective, timeZone));
 };
 
-export const getTradeByKey = (key: string): TradeRow | undefined =>
-  db.select().from(trades).where(eq(trades.key, key)).get();
+export const getTradeByKey = (key: string): TradeRow | undefined => {
+  ensureTradeMaterialization();
+  return db.select().from(trades).where(eq(trades.key, key)).get();
+};

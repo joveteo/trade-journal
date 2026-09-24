@@ -4,6 +4,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles, Star } from "lucide-react";
+import { optionVerticalStats } from "@luxalgo/journal-core";
 import { FilterBar } from "@/components/filter-bar";
 import { Pnl } from "@/components/pnl";
 import { MonetaryValue, MonetaryField } from "@/components/privacy";
@@ -74,6 +75,7 @@ interface TradeDetail {
 
 interface ExecutionRow {
   id: string;
+  symbol: string;
   side: "buy" | "sell";
   quantity: number;
   price: number;
@@ -114,6 +116,16 @@ function TradeView({ tradeKey }: { tradeKey: string }) {
     );
   }
   const { trade, executions, timeZone } = data;
+  const showsMultipleContracts = new Set(executions.map((execution) => execution.symbol)).size > 1;
+  const spread = optionVerticalStats({
+    symbol: trade.symbol,
+    direction: trade.direction,
+    quantity: trade.quantity,
+    avgEntry: trade.avgEntry,
+    netPnl: trade.netPnl,
+    status: trade.status,
+    contractMultiplier: trade.contractMultiplier ?? undefined,
+  });
 
   const patch = async (body: Record<string, unknown>) => {
     if (Object.keys(body).length)
@@ -208,6 +220,26 @@ function TradeView({ tradeKey }: { tradeKey: string }) {
                 label="Realized R"
                 value={trade.realizedR === null ? "–" : `${fmtNumber(trade.realizedR)}R`}
               />
+              {spread && (
+                <>
+                  <Meta
+                    label={spread.structure === "credit" ? "Credit" : "Debit"}
+                    value={fmtNumber(spread.netPremium)}
+                    monetary
+                  />
+                  <Meta label="Width" value={fmtNumber(spread.width, 2)} />
+                  <Meta label="Max profit" value={fmtMoney(spread.maxProfit)} monetary />
+                  <Meta label="Max loss" value={fmtMoney(spread.maxLoss)} monetary />
+                  <Meta
+                    label="% of max"
+                    value={
+                      spread.capturedMaxProfit === null
+                        ? "–"
+                        : fmtPercent(spread.capturedMaxProfit, 2)
+                    }
+                  />
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -235,6 +267,7 @@ function TradeView({ tradeKey }: { tradeKey: string }) {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Time</TableHead>
+                    {showsMultipleContracts && <TableHead>Contract</TableHead>}
                     <TableHead>Side</TableHead>
                     <TableHead>Quantity</TableHead>
                     <TableHead>Price</TableHead>
@@ -249,6 +282,9 @@ function TradeView({ tradeKey }: { tradeKey: string }) {
                         <TableCell className="text-muted-foreground">
                           {formatTimestamp(execution.executedAt, timeZone)}
                         </TableCell>
+                        {showsMultipleContracts && (
+                          <TableCell className="font-medium">{execution.symbol}</TableCell>
+                        )}
                         <TableCell>
                           <span className={execution.side === "buy" ? "text-profit" : "text-loss"}>
                             {execution.side === "buy" ? "▲ BUY" : "▼ SELL"}

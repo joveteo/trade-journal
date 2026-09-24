@@ -132,6 +132,7 @@ const brokerMetadata = (
   realizedPnl: number(attr(row, "realizedPnl", "fifoPnlRealized")),
   proceeds: number(attr(row, "proceeds")),
   basis: number(attr(row, "cost", "costBasis", "basis")),
+  taxes: number(attr(row, "taxes")),
 });
 
 const metadataId = (row: Attributes, index: number, prefix: string): string => {
@@ -164,7 +165,9 @@ const instrument = (row: Attributes) =>
   });
 
 const explicitStrategyGroup = (broker: BrokerExecutionMetadata): string | undefined => {
-  const id = broker.orderId ?? broker.orderReference ?? broker.brokerageOrderId;
+  // Combo legs have distinct ibOrderID values in real Flex statements, while
+  // brokerageOrderID is shared by every leg of the parent spread order.
+  const id = broker.brokerageOrderId ?? broker.orderReference ?? broker.orderId;
   return id ? `ibkr-order:${broker.accountId ?? ""}:${id}` : undefined;
 };
 
@@ -191,6 +194,8 @@ const discardUnsharedExplicitGroups = (executions: ImportedExecution[]): void =>
   }
 };
 
+const VERTICAL_CLUSTER_MS = 3_000;
+
 const addStructuralSpreadGroups = (executions: ImportedExecution[]): number => {
   const candidates = new Map<string, ImportedExecution[]>();
   for (const execution of executions) {
@@ -199,11 +204,9 @@ const addStructuralSpreadGroups = (executions: ImportedExecution[]): number => {
     if (execution.importMetadata.broker.strategyGroupId) continue;
     const key = [
       execution.importMetadata.broker.accountId ?? "",
-      execution.executedAt,
       contract.underlying,
       contract.expiry,
       contract.right,
-      execution.quantity,
     ].join("|");
     const group = candidates.get(key);
     if (group) group.push(execution);
@@ -211,19 +214,51 @@ const addStructuralSpreadGroups = (executions: ImportedExecution[]): number => {
   }
 
   let grouped = 0;
-  for (const [key, group] of candidates) {
-    if (
-      group.length !== 2 ||
-      group[0]!.side === group[1]!.side ||
-      group[0]!.symbol === group[1]!.symbol
-    ) {
-      continue;
+  for (const [key, bucket] of candidates) {
+    bucket.sort(
+      (left, right) =>
+        Date.parse(left.executedAt) - Date.parse(right.executedAt) ||
+        (left.importMetadata?.order ?? 0) - (right.importMetadata?.order ?? 0),
+    );
+    const clusters: ImportedExecution[][] = [];
+    for (const execution of bucket) {
+      const cluster = clusters.at(-1);
+      if (
+        cluster &&
+        Date.parse(execution.executedAt) - Date.parse(cluster[0]!.executedAt) <= VERTICAL_CLUSTER_MS
+      ) {
+        cluster.push(execution);
+      } else {
+        clusters.push([execution]);
+      }
     }
-    const groupId = `ibkr-vertical:${key}`;
-    for (const execution of group) {
-      execution.importMetadata!.broker!.strategyGroupId = groupId;
+    for (const [index, cluster] of clusters.entries()) {
+      const symbols = [...new Set(cluster.map((execution) => execution.symbol))];
+      if (symbols.length !== 2) continue;
+      const [leftSymbol, rightSymbol] = symbols;
+      const leftQty = cluster
+        .filter((execution) => execution.symbol === leftSymbol)
+        .reduce(
+          (total, execution) =>
+            total + (execution.side === "buy" ? execution.quantity : -execution.quantity),
+          0,
+        );
+      const rightQty = cluster
+        .filter((execution) => execution.symbol === rightSymbol)
+        .reduce(
+          (total, execution) =>
+            total + (execution.side === "buy" ? execution.quantity : -execution.quantity),
+          0,
+        );
+      if (Math.sign(leftQty) === Math.sign(rightQty) || Math.abs(leftQty) !== Math.abs(rightQty)) {
+        continue;
+      }
+      const groupId = `ibkr-vertical:${key}|${cluster[0]!.executedAt}|${index}`;
+      for (const execution of cluster) {
+        execution.importMetadata!.broker!.strategyGroupId = groupId;
+      }
+      grouped++;
     }
-    grouped++;
   }
   return grouped;
 };
@@ -368,7 +403,7 @@ export const parseIbkrFlexSync = (
       side: sideRaw === "BUY" ? "buy" : "sell",
       quantity,
       price,
-      fee: Math.abs(number(attr(row, "ibCommission")) ?? 0),
+      fee: Math.abs(number(attr(row, "ibCommission")) ?? 0) + Math.abs(broker.taxes ?? 0),
       executedAt,
       assetClass: resolved.assetClass,
       importMetadata: {

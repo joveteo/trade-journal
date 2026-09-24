@@ -34,6 +34,7 @@ export interface BrokerExecutionMetadata {
   realizedPnl?: number;
   proceeds?: number;
   basis?: number;
+  taxes?: number;
   settlementPriceSource?: "trade-price" | "proceeds" | "realized-pnl-basis";
 }
 

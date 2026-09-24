@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   formatOptionSymbol,
+  optionVerticalStats,
   parseExpiry,
   parseOptionSymbol,
+  parseVerticalSymbol,
   resolveContractMultiplier,
   resolveOptionInstrument,
 } from "../src/options";
@@ -35,6 +37,40 @@ describe("option contract identity", () => {
       strike: 580.5,
       right: "P",
     });
+  });
+
+  it("parses a journaled vertical and prices credit vs debit risk", () => {
+    expect(parseVerticalSymbol("SPXW 06NOV25 6800/6815 C VERTICAL")).toMatchObject({
+      underlying: "SPXW",
+      expiry: "2025-11-06",
+      lowStrike: 6800,
+      highStrike: 6815,
+      right: "C",
+      width: 15,
+    });
+    const soldCall = optionVerticalStats({
+      symbol: "SPXW 06NOV25 6800/6815 C VERTICAL",
+      direction: "short",
+      quantity: 2,
+      avgEntry: 0.7,
+      netPnl: 135.02,
+      status: "win",
+    });
+    expect(soldCall).toMatchObject({ structure: "credit" });
+    expect(soldCall!.maxProfit).toBeCloseTo(140, 9);
+    expect(soldCall!.maxLoss).toBeCloseTo(2860, 9);
+    expect(soldCall!.capturedMaxProfit).toBeCloseTo(135.02 / 140, 9);
+    const soldPut = optionVerticalStats({
+      symbol: "SPXW 05NOV25 6745/6760 P VERTICAL",
+      direction: "long",
+      quantity: 2,
+      avgEntry: 1.15,
+      netPnl: 224.44,
+      status: "win",
+    });
+    expect(soldPut).toMatchObject({ structure: "credit" });
+    expect(soldPut!.maxProfit).toBeCloseTo(230, 9);
+    expect(soldPut!.maxLoss).toBeCloseTo(2770, 9);
   });
 
   it("does not treat a stock or futures root as an option", () => {

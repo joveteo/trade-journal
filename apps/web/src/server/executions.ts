@@ -218,9 +218,7 @@ export const normalizeStoredOptionExecutions = (accountId: string): OptionNormal
     if (unidentified.length === 0) continue;
     for (const index of unidentified.slice(1)) union(unidentified[0]!, index);
     const identities = new Set(
-      indexes
-        .map((index) => candidates[index]!.brokerId)
-        .filter((id): id is string => Boolean(id)),
+      indexes.map((index) => candidates[index]!.brokerId).filter((id): id is string => Boolean(id)),
     );
     if (identities.size !== 1) continue;
     const identified = indexes.find((index) => candidates[index]!.brokerId);
@@ -432,9 +430,9 @@ export const insertExecutions = (
     const isLegacySyncFill = (fill: StoredFill | undefined): fill is StoredFill =>
       Boolean(
         fill &&
-          fill.source === "sync" &&
-          !fill.brokerId &&
-          (fill.brokerProvider === null || fill.brokerProvider === "ibkr-flex"),
+        fill.source === "sync" &&
+        !fill.brokerId &&
+        (fill.brokerProvider === null || fill.brokerProvider === "ibkr-flex"),
       );
     for (const row of usable) {
       const brokerId = brokerIdentity(row.importMetadata);
@@ -574,7 +572,12 @@ export const insertExecutions = (
       remember(existing);
       enriched++;
     }
-    if (inserted > 0 || enriched > 0) rebuildAccount(accountId);
+    // Re-run IBKR materialization even when every fill was a duplicate. This
+    // lets existing imports adopt newer strategy grouping rules on re-import
+    // or sync without requiring the raw executions to change.
+    if (inserted > 0 || enriched > 0 || usable.some(isIbkrFlexExecution)) {
+      rebuildAccount(accountId);
+    }
     if (note) {
       const affected = tx
         .select({

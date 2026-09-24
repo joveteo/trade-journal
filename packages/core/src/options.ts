@@ -1,4 +1,4 @@
-import type { AssetClass } from "./types";
+import type { AssetClass, TradeDirection } from "./types";
 
 /** Standard US equity/index option contract size. Override per symbol in settings. */
 export const EQUITY_OPTION_MULTIPLIER = 100;
@@ -54,6 +54,8 @@ const MONTH_INDEX: Record<string, number> = Object.fromEntries(
 const OCC_SYMBOL = /^([A-Z0-9][A-Z0-9.\-]{0,9}?)\s+(\d{6})([CP])(\d{8})$/;
 const IBKR_SYMBOL =
   /^([A-Z0-9][A-Z0-9.\-]{0,9}?)\s+(\d{1,2})([A-Z]{3})(\d{2})\s+(\d+(?:\.\d+)?)\s+(C|P|CALL|PUT)$/;
+const IBKR_VERTICAL =
+  /^([A-Z0-9][A-Z0-9.\-]{0,9}?)\s+(\d{1,2})([A-Z]{3})(\d{2})\s+(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)\s+(C|P|CALL|PUT)\s+VERTICAL$/;
 
 export const collapseSymbol = (value: string): string =>
   value.trim().replace(/\s+/g, " ").toUpperCase();
@@ -130,6 +132,95 @@ export const formatOptionSymbol = (contract: OptionContract): string => {
   if (!parts || !strike) return collapseSymbol(contract.underlying);
   const month = MONTHS[parts.month - 1];
   return `${collapseSymbol(contract.underlying)} ${pad2(parts.day)}${month}${String(parts.year).slice(2)} ${strike} ${contract.right}`;
+};
+
+export interface OptionVertical {
+  underlying: string;
+  expiry: string;
+  lowStrike: number;
+  highStrike: number;
+  right: OptionRight;
+  width: number;
+}
+
+export const parseVerticalSymbol = (symbol: string): OptionVertical | null => {
+  const text = collapseSymbol(symbol);
+  const match = text.match(IBKR_VERTICAL);
+  if (!match) return null;
+  const expiry = parseExpiry(`${match[2]}${match[3]}${match[4]}`);
+  const lowStrike = Number(match[5]);
+  const highStrike = Number(match[6]);
+  const right = parseOptionRight(match[7]);
+  if (
+    !expiry ||
+    !right ||
+    !Number.isFinite(lowStrike) ||
+    !Number.isFinite(highStrike) ||
+    lowStrike <= 0 ||
+    highStrike <= lowStrike
+  ) {
+    return null;
+  }
+  return {
+    underlying: match[1]!,
+    expiry,
+    lowStrike,
+    highStrike,
+    right,
+    width: highStrike - lowStrike,
+  };
+};
+
+export interface OptionVerticalStats {
+  width: number;
+  right: OptionRight;
+  structure: "credit" | "debit";
+  netPremium: number;
+  maxProfit: number;
+  maxLoss: number;
+  capturedMaxProfit: number | null;
+}
+
+/**
+ * Selling a call vertical is short (bearish credit). Selling a put vertical is
+ * long (bullish credit). Max profit/loss use the strike width and net premium.
+ */
+export const optionVerticalStats = (input: {
+  symbol: string;
+  direction: TradeDirection;
+  quantity: number;
+  avgEntry: number;
+  netPnl?: number;
+  status?: string;
+  contractMultiplier?: number | null;
+}): OptionVerticalStats | null => {
+  const vertical = parseVerticalSymbol(input.symbol);
+  if (!vertical || input.quantity <= 0 || input.avgEntry < 0) return null;
+  const structure: "credit" | "debit" =
+    (vertical.right === "C" && input.direction === "short") ||
+    (vertical.right === "P" && input.direction === "long")
+      ? "credit"
+      : "debit";
+  const multiplier = input.contractMultiplier ?? EQUITY_OPTION_MULTIPLIER;
+  const contracts = input.quantity * multiplier;
+  const creditOrDebit = input.avgEntry * contracts;
+  const widthValue = vertical.width * contracts;
+  const maxProfit =
+    structure === "credit" ? creditOrDebit : Math.max(widthValue - creditOrDebit, 0);
+  const maxLoss = structure === "credit" ? Math.max(widthValue - creditOrDebit, 0) : creditOrDebit;
+  const capturedMaxProfit =
+    input.status && input.status !== "open" && maxProfit > 0 && input.netPnl !== undefined
+      ? input.netPnl / maxProfit
+      : null;
+  return {
+    width: vertical.width,
+    right: vertical.right,
+    structure,
+    netPremium: input.avgEntry,
+    maxProfit,
+    maxLoss,
+    capturedMaxProfit,
+  };
 };
 
 export const parseOptionSymbol = (symbol: string): OptionContract | null => {
