@@ -33,14 +33,18 @@ vi.mock("@/lib/use-api", () => ({
 vi.mock("@/lib/use-autosave", () => ({
   useAutosave: () => ({ save: state.save, status: "Saved", flush: vi.fn() }),
 }));
-vi.mock("@/components/rich-editor", () => ({
-  RichEditor: ({ value, onChange }: { value: string; onChange: (s: string) => void }) =>
-    createElement("textarea", {
-      value,
-      onChange: () => {},
-      onInput: (e: { currentTarget: HTMLTextAreaElement }) => onChange(e.currentTarget.value),
-    }),
-}));
+vi.mock("@/components/rich-editor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/components/rich-editor")>();
+  return {
+    ...actual,
+    RichEditor: ({ value, onChange }: { value: string; onChange: (s: string) => void }) =>
+      createElement("textarea", {
+        value,
+        onChange: () => {},
+        onInput: (e: { currentTarget: HTMLTextAreaElement }) => onChange(e.currentTarget.value),
+      }),
+  };
+});
 vi.mock("@/components/charts/equity-area", () => ({ EquityArea: () => null }));
 vi.mock("@/components/pnl", () => ({ Pnl: () => null }));
 vi.mock("@/components/privacy", () => ({ MonetaryValue: () => null }));
@@ -111,6 +115,25 @@ it("sends the full current filter snapshot and displays the server-confirmed sco
   state.filters = {};
   await renderAsk();
   expect(container.textContent).not.toContain("Scoped answer");
+});
+
+it("renders markdown answers so emphasis is formatted instead of shown as asterisks", async () => {
+  state.post.mockResolvedValue(reply("Stop **Friday** first."));
+  await renderAsk();
+  await click(suggestion);
+  expect(container.querySelector("strong")?.textContent).toBe("Friday");
+  expect(container.textContent).toContain("Stop Friday first.");
+  expect(container.textContent).not.toContain("**Friday**");
+});
+
+it("renders latex-style math from local models as readable text", async () => {
+  state.post.mockResolvedValue(
+    reply("Wednesday ($\\text{net } 2787.32$) and Tuesday ($\\text{net } 1901.17$)."),
+  );
+  await renderAsk();
+  await click(suggestion);
+  expect(container.textContent).toContain("Wednesday (net 2787.32) and Tuesday (net 1901.17).");
+  expect(container.textContent).not.toContain("\\text");
 });
 
 it.each(["accounts", "symbol", "timezone"])(

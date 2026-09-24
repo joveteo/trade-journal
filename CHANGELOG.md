@@ -22,6 +22,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Prop firm tracker: evaluation and reset costs, refunds, payout requests, receipts, cash ROI, renewals, attachments, CSV import and export
 - Calendar insights, rolling performance trends, and a trade explorer scatter in Reports
 - Light mode, a collapsible sidebar, and friendlier AI setup and error notices
+- OpenAI AI settings accept an OpenAI-compatible API base URL so local servers such as LM Studio can be used without a cloud key
 
 ### Changed
 
@@ -39,6 +40,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - IBKR option fills keep contract identity and a 100× multiplier so premium P&L is in dollars, and zero-price BookTrades use Cost Basis and Realized P/L instead of opening reverse $0 legs
 - Grammarly and similar extensions no longer trip a `<body>` hydration mismatch on first load
 - Password protection now verifies the session signature on every API route. Previously, when `JOURNAL_PASSWORD` was set, any request carrying a cookie of the right name was accepted, so a forged cookie could read the journal.
+- Ask-your-journal answers and trade critiques render Markdown (bold, lists, headings) instead of raw asterisks
+- Model LaTeX such as `$\\text{net } 2787.32$` is shown as readable text instead of raw commands
 
 ## [0.1.0] - 2026-09-03
 

@@ -5,6 +5,7 @@ import { EMPTY_DEFAULTS, type JournalDefaults } from "@/lib/journal-defaults";
 import {
   AI_DEFAULT_MODELS,
   isAiProvider,
+  parseOpenAiBaseUrl,
   type AiProvider,
   type AiSettingsPayload,
 } from "@/lib/ai-settings";
@@ -78,7 +79,7 @@ export const getAiProvider = (): AiProvider => {
   const selected = getSetting("aiProvider");
   if (isAiProvider(selected)) return selected;
   // Preserve existing Anthropic setups; an OpenAI-only setup works without a UI visit.
-  return !getAiKey("anthropic") && getAiKey("openai") ? "openai" : "anthropic";
+  return !getAiKey("anthropic") && openaiConfigured() ? "openai" : "anthropic";
 };
 
 export const aiModelSetting = (provider: AiProvider): string =>
@@ -87,16 +88,38 @@ export const aiModelSetting = (provider: AiProvider): string =>
 export const getAiModel = (provider: AiProvider): string =>
   getSetting(aiModelSetting(provider))?.trim() || AI_DEFAULT_MODELS[provider];
 
+export const openaiBaseUrlEnvironment = (): string | null =>
+  parseOpenAiBaseUrl(process.env.OPENAI_BASE_URL ?? "");
+
+export const getOpenAiBaseUrl = (): string | null =>
+  openaiBaseUrlEnvironment() ?? parseOpenAiBaseUrl(getSetting("openaiBaseUrl") ?? "");
+
+export const setOpenAiBaseUrl = (url: string | null): void => {
+  if (url === null) deleteSetting("openaiBaseUrl");
+  else setSetting("openaiBaseUrl", url);
+};
+
+export const openaiConfigured = (): boolean =>
+  getAiKey("openai") !== null || getOpenAiBaseUrl() !== null;
+
 export const getAiSettings = (): AiSettingsPayload => {
   const aiProvider = getAiProvider();
+  const openaiUrl = getOpenAiBaseUrl();
   const connection = (provider: AiProvider) => ({
-    configured: Boolean(getAiKey(provider)),
+    configured: provider === "openai" ? openaiConfigured() : Boolean(getAiKey(provider)),
     source: aiKeyEnvironment(provider)
       ? ("environment" as const)
       : getAiKey(provider)
         ? ("saved" as const)
         : null,
     model: getAiModel(provider),
+    baseUrl: provider === "openai" ? openaiUrl : null,
+    baseUrlSource:
+      provider !== "openai" || !openaiUrl
+        ? null
+        : openaiBaseUrlEnvironment()
+          ? ("environment" as const)
+          : ("saved" as const),
   });
   const aiConnections = { anthropic: connection("anthropic"), openai: connection("openai") };
   return {

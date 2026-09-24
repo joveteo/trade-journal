@@ -9,10 +9,19 @@ import {
   aiModelSetting,
   getAiProvider,
   getAiSettings,
+  openaiBaseUrlEnvironment,
   setAiKey,
+  setOpenAiBaseUrl,
   setSetting,
 } from "@/server/settings";
-import { AI_PROVIDERS, AI_PROVIDER_NAMES, isAiProvider, type AiProvider } from "@/lib/ai-settings";
+import {
+  AI_PROVIDERS,
+  AI_PROVIDER_NAMES,
+  isAiProvider,
+  isValidOpenAiBaseUrl,
+  parseOpenAiBaseUrl,
+  type AiProvider,
+} from "@/lib/ai-settings";
 import { isTimeZone } from "@/lib/timezone";
 
 export const GET = handler((request?: Request) => {
@@ -35,6 +44,8 @@ interface SettingsBody {
   openaiKey?: string | null;
   aiProvider?: AiProvider;
   aiModel?: string;
+  /** OpenAI-compatible API root. Empty/null clears a saved URL. Absent = unchanged. */
+  openaiBaseUrl?: string | null;
 }
 
 export const PATCH = handler(async (request: Request) => {
@@ -63,6 +74,17 @@ export const PATCH = handler(async (request: Request) => {
     requireValue(
       !aiKeyEnvironment(id),
       `${AI_PROVIDER_NAMES[id]} uses an environment key. Update or remove it on the server.`,
+    );
+  }
+  if (body.openaiBaseUrl !== undefined) {
+    requireValue(
+      body.openaiBaseUrl === null ||
+        (typeof body.openaiBaseUrl === "string" && isValidOpenAiBaseUrl(body.openaiBaseUrl)),
+      "Enter a valid http(s) OpenAI-compatible API base URL.",
+    );
+    requireValue(
+      !openaiBaseUrlEnvironment(),
+      "OpenAI uses OPENAI_BASE_URL from the server environment. Update or remove it on the server.",
     );
   }
   for (const key of ["timeZone", "importTimeZone"] as const)
@@ -99,6 +121,8 @@ export const PATCH = handler(async (request: Request) => {
     }
     if (body.aiProvider !== undefined) setSetting("aiProvider", body.aiProvider);
     if (body.aiModel !== undefined) setSetting(aiModelSetting(provider), body.aiModel.trim());
+    if (body.openaiBaseUrl !== undefined)
+      setOpenAiBaseUrl(body.openaiBaseUrl === null ? null : parseOpenAiBaseUrl(body.openaiBaseUrl));
   });
   return ok({ saved: true });
 });
