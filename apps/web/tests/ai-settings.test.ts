@@ -7,11 +7,12 @@ const originalDir = process.env.JOURNAL_DATA_DIR;
 const scratch = mkdtempSync(join(tmpdir(), "journal-ai-test-"));
 process.env.JOURNAL_DATA_DIR = scratch;
 const { db, settings } = await import("../src/db");
-const { getAiKey, getAiModel, getAiProvider, setSetting, getSetting } =
+const { getAiKey, getAiModel, getAiProvider, getOpenAiBaseUrl, setSetting, getSetting } =
   await import("../src/server/settings");
 const { GET, PATCH } = await import("../src/app/api/settings/route");
 const { GET: exportData } = await import("../src/app/api/export/route");
 const { aiConfigured, runAi } = await import("../src/server/ai");
+const { parseOpenAiBaseUrl, OPENAI_LOCAL_API_KEY } = await import("../src/lib/ai-settings");
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
 
 const request = (body: unknown) =>
@@ -27,6 +28,7 @@ beforeEach(() => {
   db.delete(settings).run();
   vi.stubEnv("ANTHROPIC_API_KEY", "");
   vi.stubEnv("OPENAI_API_KEY", "");
+  vi.stubEnv("OPENAI_BASE_URL", "");
   vi.stubEnv("JOURNAL_PASSWORD", "");
   vi.stubGlobal(
     "fetch",
@@ -143,6 +145,11 @@ describe("AI provider settings", () => {
       { aiModel: 42 },
       { aiModel: "" },
       { aiModel: "a\nb" },
+      { openaiBaseUrl: "ftp://127.0.0.1:1234" },
+      { openaiBaseUrl: "not-a-url" },
+      { openaiBaseUrl: "http://user:pass@127.0.0.1:1234" },
+      { openaiBaseUrl: "http://127.0.0.1:1234/v1?foo=1" },
+      { openaiBaseUrl: 42 },
       ...["", " ", 42, {}, "key\nvalue", "a".repeat(4097)].flatMap((key) => [
         { openaiKey: key },
         { anthropicKey: key },
@@ -168,6 +175,61 @@ describe("AI provider settings", () => {
     expect((await GET()).status).toBe(401);
     expect((await save({ openaiKey: "fixture-key" })).status).toBe(401);
     expect(getAiKey("openai")).toBeNull();
+  });
+});
+
+describe("OpenAI-compatible base URL", () => {
+  it("normalizes LM Studio host URLs and rejects credentials or non-http schemes", () => {
+    expect(parseOpenAiBaseUrl("http://127.0.0.1:1234")).toBe("http://127.0.0.1:1234/v1");
+    expect(parseOpenAiBaseUrl(" http://127.0.0.1:1234/v1/ ")).toBe("http://127.0.0.1:1234/v1");
+    expect(parseOpenAiBaseUrl("https://api.openai.com/v1")).toBeNull();
+    expect(parseOpenAiBaseUrl("ftp://127.0.0.1:1234")).toBeNull();
+    expect(parseOpenAiBaseUrl("http://user:pass@127.0.0.1:1234/v1")).toBeNull();
+  });
+
+  it("saves a local endpoint without a cloud key and keeps Anthropic separate", async () => {
+    expect(
+      (
+        await save({
+          aiProvider: "openai",
+          aiModel: "qwen/qwen3.8-27b",
+          openaiBaseUrl: "http://127.0.0.1:1234",
+        })
+      ).status,
+    ).toBe(200);
+    expect(await state()).toMatchObject({
+      aiProvider: "openai",
+      aiConfigured: true,
+      aiModel: "qwen/qwen3.8-27b",
+      aiConnections: {
+        openai: {
+          configured: true,
+          source: null,
+          baseUrl: "http://127.0.0.1:1234/v1",
+          baseUrlSource: "saved",
+        },
+      },
+    });
+    expect(getOpenAiBaseUrl()).toBe("http://127.0.0.1:1234/v1");
+    expect(getAiKey("openai")).toBeNull();
+    expect(aiConfigured()).toBe(true);
+    await save({ openaiBaseUrl: null });
+    expect(aiConfigured()).toBe(false);
+    expect(getOpenAiBaseUrl()).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("selects OpenAI when only a compatible endpoint is configured", async () => {
+    vi.stubEnv("OPENAI_BASE_URL", "http://host.docker.internal:1234/v1");
+    expect(await state()).toMatchObject({
+      aiProvider: "openai",
+      aiConfigured: true,
+      aiConnections: {
+        openai: { configured: true, source: null, baseUrlSource: "environment" },
+      },
+    });
+    expect((await save({ openaiBaseUrl: "http://127.0.0.1:1234/v1" })).status).toBe(400);
+    expect((await save({ aiProvider: "openai", aiModel: "qwen/qwen3.8-27b" })).status).toBe(200);
   });
 });
 
@@ -204,6 +266,39 @@ describe("AI provider requests through the real SDK adapters", () => {
     const body = JSON.parse(init.body as string);
     expect(body).toMatchObject({ model: "gpt-4.1-mini", max_output_tokens: 700, store: false });
     expect(JSON.stringify(body.input)).toContain("Fixture journal question");
+  });
+
+  it("sends chat completions to a saved LM Studio endpoint without a cloud key", async () => {
+    await save({
+      aiProvider: "openai",
+      aiModel: "qwen/qwen3.8-27b",
+      openaiBaseUrl: "http://127.0.0.1:1234",
+    });
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        id: "chatcmpl_fixture",
+        object: "chat.completion",
+        created: 1,
+        model: "qwen/qwen3.8-27b",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "Local reflection" },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    expect(await runAi("Fixture journal question", 700)).toBe("Local reflection");
+    const [url, init] = (fetcher.mock.calls as unknown as [string, RequestInit][])[0]!;
+    expect(url).toBe("http://127.0.0.1:1234/v1/chat/completions");
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${OPENAI_LOCAL_API_KEY}`);
+    const body = JSON.parse(init.body as string);
+    expect(body.model).toBe("qwen/qwen3.8-27b");
+    expect(JSON.stringify(body)).toContain("Fixture journal question");
+    expect(JSON.stringify(body)).not.toContain('"store":false');
   });
 
   it("keeps Anthropic requests using their own key, model, and endpoint", async () => {

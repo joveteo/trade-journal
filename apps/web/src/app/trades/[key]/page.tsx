@@ -31,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { RichEditor, type RichEditorHandle } from "@/components/rich-editor";
+import { Markdown, RichEditor, type RichEditorHandle } from "@/components/rich-editor";
 import { Attachments } from "@/components/attachments";
 import { ReviewExport } from "@/components/review-export";
 import { RuleChecklist } from "@/components/rule-checklist";
@@ -327,7 +327,7 @@ function TradeView({ tradeKey }: { tradeKey: string }) {
             )}
             {critique && (
               <CardContent>
-                <p className="whitespace-pre-wrap text-sm leading-relaxed">{critique}</p>
+                <Markdown>{critique}</Markdown>
               </CardContent>
             )}
           </Card>

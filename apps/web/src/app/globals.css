@@ -1291,6 +1291,9 @@ body.dashboard-is-dragging * {
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
+.journal-markdown strong {
+  font-weight: 600;
+}
 .journal-markdown h1,
 .journal-markdown h2,
 .journal-markdown h3 {
@@ -1307,6 +1310,9 @@ body.dashboard-is-dragging * {
 .journal-markdown ul,
 .journal-markdown ol {
   margin-bottom: 0.75em;
+}
+.journal-markdown li p {
+  margin-bottom: 0.35em;
 }
 .journal-markdown ul {
   list-style: disc;

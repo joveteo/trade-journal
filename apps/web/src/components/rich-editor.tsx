@@ -13,13 +13,17 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { fieldClass } from "@/components/filter-fields";
 import { postJson, useApi } from "@/lib/use-api";
-import { formatInlineSelection, remarkRepairSpacedEmphasis } from "@/lib/note-formatting";
+import {
+  formatInlineSelection,
+  remarkDecodeLatex,
+  remarkRepairSpacedEmphasis,
+} from "@/lib/note-formatting";
 import { tradeLinkLabel, tradeMarkdownLink, type LinkableTrade } from "@/lib/trade-links";
 export function Markdown({ children }: { children: string }) {
   return (
     <div className="journal-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkRepairSpacedEmphasis]}
+        remarkPlugins={[remarkGfm, remarkDecodeLatex, remarkRepairSpacedEmphasis]}
         components={{
           table: ({ children }) => (
             <div className="max-w-full overflow-x-auto">

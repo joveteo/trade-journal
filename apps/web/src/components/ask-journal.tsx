@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { postJson } from "@/lib/use-api";
+import { Markdown } from "@/components/rich-editor";
 import { AiNotice } from "./ai-notice";
 import { useFilters } from "./filter-bar";
 import { useAiRequest, type AiScope } from "@/lib/use-ai-request";
@@ -93,7 +94,7 @@ function ScopedAskJournal({ filters, timeZone }: { filters: AnalysisFilters; tim
         {answer && (
           <div className="space-y-2 pt-1">
             <p className="text-xs text-muted-foreground">{answer.scope.label}</p>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">{answer.answer}</p>
+            <Markdown>{answer.answer}</Markdown>
           </div>
         )}
       </CardContent>
