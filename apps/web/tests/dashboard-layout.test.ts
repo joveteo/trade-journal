@@ -108,4 +108,21 @@ describe("dashboard layout persistence", () => {
       }),
     ).toEqual({ a: 3, b: 3 });
   });
+
+  it("leaves spare columns empty rather than widening fixed-width cards", () => {
+    const base = { small: 3, medium: 5, wide: 10, full: 15 };
+    expect(
+      balancedDashboardSpans([{ id: "lone", size: "small", stretch: false }], 15, base),
+    ).toEqual({ lone: 3 });
+    expect(
+      balancedDashboardSpans(
+        [
+          { id: "fixed", size: "small", stretch: false },
+          { id: "grow", size: "small" },
+        ],
+        15,
+        base,
+      ),
+    ).toEqual({ fixed: 3, grow: 12 });
+  });
 });

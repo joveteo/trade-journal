@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   RESOLUTIONS,
   type Resolution,
-  type MarketConnection,
+  type MarketConnectionsState,
   type TradeMarketResult,
 } from "@/lib/market-data";
 import type { TradePoint } from "@/lib/trade-explorer";
@@ -22,9 +22,10 @@ export function ReportMarketEstimates({
   currencies: string[];
   onComplete: () => void;
 }) {
-  const { data } = useApi<{ connections: MarketConnection[] }>("/api/market-data/connections");
+  const { data } = useApi<MarketConnectionsState>("/api/market-data/connections");
   const available = data?.connections.filter((item) => item.configured) ?? [];
-  const [provider, setProvider] = useState("");
+  const [chosenProvider, setProvider] = useState<string | null>(null);
+  const provider = chosenProvider ?? data?.defaultProvider ?? "";
   const [dataset, setDataset] = useState("");
   const [resolution, setResolution] = useState<Resolution>("1m");
   const info = providerInfo(provider);

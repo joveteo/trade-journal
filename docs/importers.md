@@ -70,7 +70,7 @@ selections beyond the defaults.
   the trader's old numbers to the cent (skipped when a contract multiplier makes the
   price-implied gross meaningless)
 - Content-hash dedup on insert: re-importing the same file with the same timezone is a no-op
-- Equity and index options default to a 100 multiplier unless **Settings → Journal** lists the exact symbol. OCC (`SPXW  260410C06865000`) and IBKR descriptive (`SPXW 19SEP25 6655 C`) symbols are canonicalized so the same contract does not split into two positions.
+- Equity and index options default to a 100 multiplier unless **Settings → Journal** lists the exact symbol. OCC (`SPXW  260417C06865000`) and IBKR descriptive (`SPXW 26SEP25 6655 C`) symbols are canonicalized so the same contract does not split into two positions.
 
 ## Interactive Brokers Flex Query
 
@@ -86,11 +86,13 @@ Do not commit Flex statements, SQLite databases, or `.secret` files; those paths
 
 Read-only Flex Web Service sync still uses `@luxalgo/broker-sdk` for the request. The statement XML is then parsed here so option settlement, contract identity, and broker IDs survive. Sync and file import both dedupe on IBKR `transactionID` (then `tradeID` / `ibExecID`), so importing a Flex file into an account that already synced that trade does not store it again. Distinct partial fills that share a price and timestamp stay separate. A later sync can still attach broker fields to a fill saved before those ids existed. If a short sync window stored a smaller closing quantity for the same trade id, a later file with the broker's full quantity raises the stored fill; a later short sync does not shrink it. Closing fills that have no matching open inside the query window are omitted or clamped so pre-window history cannot open a reverse position.
 
+Flex Web Service statements report `dateTime` without an offset, in US Eastern time. Live sync always reads them as `America/New_York`; the **Default import timezone** setting does not apply to it. Stored timestamps are not migrated. When a sync re-receives a fill it already has (matched by broker ID), the statement's Eastern time replaces the stored one, so fills an earlier version synced under the import timezone (UTC unless configured) are corrected on the next sync and their trades rebuilt. Annotations follow the rebuilt trades. Fills older than the Flex query's date range keep their stored times; widen the query period to cover them. **Import → File upload** still uses the statement timezone chosen for that file, so pick `America/New_York` for IBKR XML.
+
 Parser warnings appear on the Accounts sync alert and on the import commit alert.
 
 ### Flex Query sections and fields
 
-In IBKR Account Management, include **Trades**. **Option Exercises, Assignments and Expirations** (`OptionEAE`) is optional: BookTrade rows in Trades already close many expired credit spreads. **Open Positions** helps the parser report expired contracts that still have no closing fill.
+In IBKR Account Management, include **Trades**. **Option Exercises, Assignments and Expirations** (`OptionEAE`) is optional: BookTrade rows in Trades already close many expired credit spreads. **Open Positions** (Summary level) supplies the positions on the Accounts page and helps the parser report expired contracts that still have no closing fill. **Cash Report** supplies the cash balance; broker equity is open-position value plus ending cash, so it needs both. A query without these sections shows equity and positions as **Not reported** rather than $0, and the sync alert names the missing section.
 
 Minimum trade fields for stocks, options, and fees:
 

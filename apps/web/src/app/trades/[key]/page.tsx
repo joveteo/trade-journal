@@ -141,16 +141,21 @@ function TradeView({ tradeKey }: { tradeKey: string }) {
     }[];
     const times = new Map(executions.map((e) => [e.id, e.executedAt]));
     const totalExitQty = exits.reduce((total, exit) => total + exit.quantity, 0);
+    // Exits at the same moment are one event: spread legs expiring together, or
+    // partial fills of one order. Plotting them apart draws a slope between equal times.
+    const byTime = new Map<string, number>();
+    for (const exit of exits) {
+      const t = times.get(exit.executionId) ?? trade.openedAt;
+      const pnl =
+        exit.grossPnl - (totalExitQty > 0 ? trade.fees * (exit.quantity / totalExitQty) : 0);
+      byTime.set(t, (byTime.get(t) ?? 0) + pnl);
+    }
     let cum = 0;
-    return exits
-      .map((exit) => ({
-        t: times.get(exit.executionId) ?? trade.openedAt,
-        pnl: exit.grossPnl - (totalExitQty > 0 ? trade.fees * (exit.quantity / totalExitQty) : 0),
-      }))
-      .sort((a, b) => Date.parse(a.t) - Date.parse(b.t))
-      .map((event) => ({
-        t: formatTimestamp(event.t, timeZone).slice(11, 16),
-        cumNetPnl: (cum += event.pnl),
+    return [...byTime]
+      .sort(([a], [b]) => Date.parse(a) - Date.parse(b))
+      .map(([t, pnl]) => ({
+        t: formatTimestamp(t, timeZone).slice(11, 16),
+        cumNetPnl: (cum += pnl),
       }));
   })();
 

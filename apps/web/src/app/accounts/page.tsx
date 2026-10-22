@@ -30,7 +30,8 @@ interface AccountRow {
   lastSyncAt: string | null;
   archivedAt: string | null;
   connected: boolean;
-  snapshot: { equity: number; positions: unknown[] } | null;
+  /** Null fields were not in the broker's report (e.g. an IBKR Flex query without those sections). */
+  snapshot: { equity: number | null; positions: unknown[] | null } | null;
 }
 
 export default function AccountsPage() {
@@ -153,11 +154,17 @@ function Accounts() {
                 <div className="text-sm">
                   Broker equity:{" "}
                   <span className="tnum font-medium">
-                    <MonetaryValue>{fmtMoney(account.snapshot.equity)}</MonetaryValue>
+                    {account.snapshot.equity === null ? (
+                      "Not reported"
+                    ) : (
+                      <MonetaryValue>{fmtMoney(account.snapshot.equity)}</MonetaryValue>
+                    )}
                   </span>
                   <span className="ml-2 text-xs text-muted-foreground">
-                    {account.snapshot.positions.length} open positions · synced{" "}
-                    {account.lastSyncAt?.slice(0, 16).replace("T", " ")}
+                    {account.snapshot.positions === null
+                      ? "positions not reported"
+                      : `${account.snapshot.positions.length} open positions`}{" "}
+                    · synced {account.lastSyncAt?.slice(0, 16).replace("T", " ")}
                   </span>
                 </div>
               )}

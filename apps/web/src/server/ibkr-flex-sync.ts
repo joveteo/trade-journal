@@ -12,6 +12,13 @@ import {
 
 type Attributes = Record<string, string>;
 
+/**
+ * Flex Web Service statements report naive `dateTime` values in US Eastern time
+ * (expirations book at 16:20 ET). Live sync uses this zone rather than the
+ * generic file-import default, which is meant for other brokers' CSV exports.
+ */
+export const IBKR_FLEX_TIME_ZONE = "America/New_York";
+
 export interface IbkrFlexSyncResult {
   executions: ImportedExecution[];
   warnings: string[];

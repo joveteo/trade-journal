@@ -41,6 +41,9 @@ beforeEach(() => {
     "OANDA_API_TOKEN",
     "OANDA_ACCOUNT_ID",
     "OANDA_ENVIRONMENT",
+    "TASTYTRADE_CLIENT_SECRET",
+    "TASTYTRADE_REFRESH_TOKEN",
+    "TASTYTRADE_ENVIRONMENT",
   ])
     vi.stubEnv(name, "");
   vi.stubEnv("JOURNAL_PASSWORD", "");
@@ -338,6 +341,25 @@ describe("trade history endpoint", () => {
     );
     expect(fetcher).not.toHaveBeenCalled();
   });
+  it("lets Tastytrade request option trades instead of rejecting them up front", async () => {
+    const key = seed("option");
+    saveConnection(
+      "tastytrade",
+      JSON.stringify({
+        clientSecret: "c".repeat(24),
+        refreshToken: "r".repeat(24),
+        environment: "live",
+      }),
+    );
+    const fetcher = vi.fn(async () => new Response("denied", { status: 401 }));
+    vi.stubGlobal("fetch", fetcher);
+    const response = await loadHistory(
+      request({ ...body, provider: "tastytrade", symbol: "TEST" }),
+      { params: Promise.resolve({ key }) },
+    );
+    expect(response.status).toBe(502);
+    expect(fetcher).toHaveBeenCalled();
+  });
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -355,14 +377,21 @@ describe("market data credential lifecycle", () => {
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
     const state = connections();
-    expect(state).toHaveLength(6);
+    expect(state).toHaveLength(7);
     expect(state.every((item) => !item.configured && item.source === null)).toBe(true);
     expect(state.map((item) => item.name)).toEqual(
       state.map((item) => item.name).sort((a, b) => a.localeCompare(b)),
     );
     const response = await GET();
     expect(response.status).toBe(200);
-    for (const id of ["london-strategic-edge", "alpaca", "binance", "coinbase", "oanda"])
+    for (const id of [
+      "london-strategic-edge",
+      "alpaca",
+      "binance",
+      "coinbase",
+      "oanda",
+      "tastytrade",
+    ])
       expect(() => connectionKey(id)).toThrow();
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -379,6 +408,7 @@ describe("market data credential lifecycle", () => {
       connections: expect.arrayContaining([
         { id, name: "London Strategic Edge", configured: true, source: "saved" },
       ]),
+      defaultProvider: id,
     });
     expect((await POST(request({ provider: id, action: "remove" }))).status).toBe(200);
     expect(connections()[0]?.configured).toBe(false);
@@ -435,6 +465,32 @@ describe("market data credential lifecycle", () => {
         )
       ).status,
     ).toBe(200);
+    expect(
+      (
+        await POST(
+          request({
+            provider: "tastytrade",
+            action: "save",
+            credentials: { clientSecret: "short", refreshToken: "also-short", environment: "live" },
+          }),
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await POST(
+          request({
+            provider: "tastytrade",
+            action: "save",
+            credentials: {
+              clientSecret: "c".repeat(24),
+              refreshToken: "r".repeat(24),
+              environment: "live",
+            },
+          }),
+        )
+      ).status,
+    ).toBe(200);
   });
   it("enables and disables public sources explicitly without accepting unnecessary secrets", async () => {
     expect(() => connectionKey("binance")).toThrow("Enable");
@@ -450,6 +506,30 @@ describe("market data credential lifecycle", () => {
     });
     expect((await POST(request({ provider: "binance", action: "remove" }))).status).toBe(200);
     expect(() => connectionKey("binance")).toThrow("Enable");
+  });
+  it("preselects the only connected source and keeps a saved default while it stays connected", async () => {
+    const state = async () => (await (await GET()).json()) as { defaultProvider: string | null };
+    expect((await state()).defaultProvider).toBeNull();
+
+    await POST(request({ provider: "binance", action: "enable" }));
+    expect((await state()).defaultProvider).toBe("binance");
+
+    await POST(request({ provider: "coinbase", action: "enable" }));
+    expect((await state()).defaultProvider).toBeNull();
+    expect((await POST(request({ provider: "coinbase", action: "default" }))).status).toBe(200);
+    expect((await state()).defaultProvider).toBe("coinbase");
+
+    // A disconnected default falls back to the remaining single source.
+    await POST(request({ provider: "coinbase", action: "remove" }));
+    expect((await state()).defaultProvider).toBe("binance");
+
+    await POST(request({ provider: "coinbase", action: "enable" }));
+    expect((await state()).defaultProvider).toBe("coinbase");
+    expect((await POST(request({ provider: "", action: "default" }))).status).toBe(200);
+    expect((await state()).defaultProvider).toBeNull();
+
+    expect((await POST(request({ provider: id, action: "default" }))).status).toBe(400);
+    expect((await POST(request({ provider: "unknown", action: "default" }))).status).toBe(400);
   });
   it("honors environment precedence and refuses misleading saves or removals", async () => {
     saveConnection(id, "saved-fixture");

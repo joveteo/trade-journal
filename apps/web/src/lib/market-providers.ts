@@ -65,6 +65,37 @@ export const MARKET_PROVIDERS: ProviderInfo[] = [
     fields: [],
   },
   {
+    id: "tastytrade",
+    name: "Tastytrade",
+    mode: "credentials",
+    description:
+      "US stocks, indexes, and equity options via dxFeed. Create an OAuth client and personal grant under my.tastytrade.com → Manage → API. Verticals load both legs and combine them; missing option history falls back to the underlying for replay.",
+    symbolHint:
+      "Stocks: AAPL. Indexes: SPX or $SPX. Options and verticals can keep the journal symbol. Verticals combine both contract candles; expired or missing legs fall back to the underlying.",
+    fields: [
+      {
+        key: "clientSecret",
+        label: "OAuth client secret",
+        environmentKey: "TASTYTRADE_CLIENT_SECRET",
+      },
+      {
+        key: "refreshToken",
+        label: "OAuth refresh token",
+        environmentKey: "TASTYTRADE_REFRESH_TOKEN",
+      },
+      {
+        key: "environment",
+        label: "Environment",
+        environmentKey: "TASTYTRADE_ENVIRONMENT",
+        defaultValue: "live",
+        options: [
+          { value: "live", label: "Live" },
+          { value: "sandbox", label: "Sandbox" },
+        ],
+      },
+    ],
+  },
+  {
     id: "oanda",
     name: "OANDA",
     mode: "credentials",

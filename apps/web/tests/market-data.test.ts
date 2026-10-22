@@ -1,6 +1,6 @@
 import { createMarketTransport, marketTransport } from "../src/server/market-data/transport";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { estimateExcursions } from "../src/lib/excursions";
+import { estimateExcursions, replayOverlayFills } from "../src/lib/excursions";
 import { replayFrame } from "../src/lib/trade-replay";
 import { londonStrategicEdge, parseLseBars } from "../src/server/market-data/london-strategic-edge";
 import type { MarketHistory } from "../src/lib/market-data";
@@ -153,6 +153,59 @@ describe("gross position excursion estimates", () => {
       ).mae,
     ).toBeNull();
   });
+  it("nets vertical leg fills against the combined package, not each contract print", () => {
+    const vertical = {
+      symbol: "SPXW 21SEP26 7625/7640 C VERTICAL",
+      direction: "short" as const,
+      openedAt: at(0),
+      closedAt: at(3),
+      assetClass: "option",
+      contractMultiplier: 100,
+    };
+    const legs = [
+      fill(0, "sell", 1, 2.5),
+      fill(0, "buy", 1, 1.8),
+      fill(3, "buy", 1, 0.3),
+      fill(3, "sell", 1, 0.2),
+    ];
+    const packageBars = [0, 1, 2].map((minute) => ({
+      ...candle(minute, 0.4, 0.9),
+      open: 0.7,
+      close: 0.6,
+    }));
+    expect(
+      estimateExcursions({ ...vertical, symbol: undefined }, legs, history(packageBars), true),
+    ).toMatchObject({ mae: null, priceBasisMismatch: true });
+    const estimate = estimateExcursions(vertical, legs, history(packageBars), true);
+    expect(estimate.priceBasisMismatch).toBeUndefined();
+    expect(estimate.mae).toBeCloseTo(20);
+    expect(estimate.mfe).toBeCloseTo(60);
+    expect(estimate.sampledBars).toBe(3);
+  });
+  it("does not treat a $0 expiration print as a price-basis mismatch", () => {
+    const vertical = {
+      symbol: "SPXW 21SEP26 7625/7640 C VERTICAL",
+      direction: "short" as const,
+      openedAt: at(0),
+      closedAt: at(3),
+      assetClass: "option",
+      contractMultiplier: 100,
+    };
+    const fills = [
+      fill(0, "sell", 1, 2.5),
+      fill(0, "buy", 1, 1.8),
+      fill(3, "buy", 1, 0),
+      fill(3, "sell", 1, 0),
+    ];
+    const packageBars = [0, 1, 2].map((minute) => ({
+      ...candle(minute, 0.4, 0.9),
+      open: 0.7,
+      close: 0.6,
+    }));
+    const estimate = estimateExcursions(vertical, fills, history(packageBars), true);
+    expect(estimate.priceBasisMismatch).toBeUndefined();
+    expect(estimate.mae).not.toBeNull();
+  });
 });
 
 describe("LSE REST contract", () => {
@@ -300,6 +353,18 @@ describe("replay without future chart data", () => {
     expect(replayFrame(history(), fills, 3).fills).toHaveLength(2);
     expect(replayFrame(history(), fills, 1).fills).toHaveLength(1);
     expect(replayFrame(history(), fills, 0).fills).toHaveLength(0);
+  });
+  it("does not overlay option premiums when replay candles are the underlying", () => {
+    const fills = [fill(0, "buy", 1, 0.7), fill(3, "sell", 1, 0.4), fill(3, "buy", 1, 0)];
+    expect(replayOverlayFills({ ...history(), priceKind: "underlying" }, "SPX", fills)).toEqual([]);
+    expect(replayOverlayFills(history(), "AAPL", fills)).toEqual(fills.slice(0, 2));
+    expect(
+      replayOverlayFills(
+        { ...history(), priceKind: "underlying" },
+        "SPXW 21SEP26 7625/7640 C VERTICAL",
+        fills,
+      ),
+    ).toEqual([]);
   });
 });
 

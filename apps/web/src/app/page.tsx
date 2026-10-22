@@ -25,12 +25,14 @@ import {
   Timer,
   TrendingDown,
   Trophy,
+  Wallet,
 } from "lucide-react";
 import { FilterBar, useFilters } from "@/components/filter-bar";
 import { AddTradeDialog } from "@/components/add-trade-dialog";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { MonetaryValue } from "@/components/privacy";
 import { Pnl } from "@/components/pnl";
+import { UnrealizedPnl } from "@/components/unrealized-pnl";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -667,6 +669,27 @@ function DashboardContent({
                     </div>
                   )}
                 </CardContent>
+              </Card>
+            ),
+          },
+          {
+            id: "widget-16",
+            label: "Unrealised P&L",
+            size: "small",
+            layoutGroup: "secondary",
+            stretch: false,
+            content: (
+              <Card className="h-full">
+                <StatHeader
+                  title="Unrealised P&L"
+                  icon={Wallet}
+                  hint="Open positions in the current filters marked at the latest candle close from your chosen market data provider, against average entry. Gross of fees; prices load only when you refresh."
+                />
+                <UnrealizedPnl
+                  key={query}
+                  query={query}
+                  openPositions={data.openPositions.length}
+                />
               </Card>
             ),
           },

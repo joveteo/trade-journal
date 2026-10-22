@@ -57,6 +57,8 @@ interface Widget {
   label: string;
   size: DashboardCardSize;
   layoutGroup: "summary" | "visuals" | "detail" | "secondary" | "full";
+  /** False keeps the card at its base width instead of absorbing spare row columns. */
+  stretch?: boolean;
   content: ReactNode;
 }
 const collisionDetection: CollisionDetection = (args) =>

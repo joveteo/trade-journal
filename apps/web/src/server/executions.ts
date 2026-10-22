@@ -537,7 +537,12 @@ export const insertExecutions = (
         ibkr &&
         brokerId !== null &&
         (existing.brokerId === null || existing.contentHash === economicHash);
-      const nextHash = upgradeQuantity || attachIdentity ? contentHash : existing.contentHash;
+      // Live sync reads Flex clocks in Eastern time, so its timestamp is authoritative:
+      // it corrects fills stored under an older timezone default or a file's chosen zone.
+      const retime =
+        ibkr && brokerId !== null && source === "sync" && row.executedAt !== existing.executedAt;
+      const nextHash =
+        upgradeQuantity || attachIdentity || retime ? contentHash : existing.contentHash;
       const occupant = byHash.get(nextHash);
       if (occupant && occupant.id !== existing.id) continue;
       const metadataChanged =
@@ -545,14 +550,14 @@ export const insertExecutions = (
       const assetClass = row.assetClass ?? null;
       const assetChanged = assetClass !== existing.assetClass;
       const shouldWrite =
-        upgradeQuantity || attachIdentity || (ibkr && (metadataChanged || assetChanged));
+        upgradeQuantity || attachIdentity || retime || (ibkr && (metadataChanged || assetChanged));
       if (!shouldWrite) continue;
 
       const next = {
         quantity: upgradeQuantity ? row.quantity : existing.quantity,
         price: upgradeQuantity ? row.price : existing.price,
         fee: upgradeQuantity ? fee : existing.fee,
-        executedAt: upgradeQuantity ? row.executedAt : existing.executedAt,
+        executedAt: upgradeQuantity || retime ? row.executedAt : existing.executedAt,
         assetClass,
         importMetadataJson:
           upgradeQuantity || metadataChanged ? importMetadataJson : existing.importMetadataJson,

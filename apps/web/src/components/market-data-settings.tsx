@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useApi, postJson } from "@/lib/use-api";
-import type { MarketConnection } from "@/lib/market-data";
+import type { MarketConnection, MarketConnectionsState } from "@/lib/market-data";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -12,9 +12,7 @@ import { providerInfo } from "@/lib/market-providers";
 import { MarketCsvSettings } from "./market-csv-settings";
 
 export function MarketDataSettings() {
-  const { data, error, refresh } = useApi<{ connections: MarketConnection[] }>(
-    "/api/market-data/connections",
-  );
+  const { data, error, refresh } = useApi<MarketConnectionsState>("/api/market-data/connections");
   return (
     <Card id="market-data" className="scroll-mt-24">
       <CardHeader>
@@ -23,9 +21,10 @@ export function MarketDataSettings() {
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
           Connect historical prices for estimated MAE/MFE and candle replay on closed trades. Vela
-          renders the charts. No data source is enabled or selected by default. Choose a connection
-          or upload your own candles. Market data connections are separate from broker sync and AI.
+          renders the charts. No data source is enabled by default. Choose a connection or upload
+          your own candles. Market data connections are separate from broker sync and AI.
         </p>
+        {data && <DefaultSource state={data} refresh={refresh} />}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -40,6 +39,58 @@ export function MarketDataSettings() {
         <MarketCsvSettings onChange={refresh} />
       </CardContent>
     </Card>
+  );
+}
+
+function DefaultSource({ state, refresh }: { state: MarketConnectionsState; refresh: () => void }) {
+  const configured = state.connections.filter((connection) => connection.configured);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!configured.length) return null;
+  if (configured.length === 1)
+    return (
+      <p className="text-sm text-muted-foreground">
+        {configured[0]!.name} is the only connected source, so trades, reports and unrealised P&L
+        use it automatically.
+      </p>
+    );
+  return (
+    <div className="space-y-1">
+      <Label htmlFor="market-default">Default source</Label>
+      <OptionSelect
+        id="market-default"
+        value={state.defaultProvider ?? ""}
+        disabled={busy}
+        onValueChange={async (provider) => {
+          setBusy(true);
+          setError("");
+          try {
+            await postJson("/api/market-data/connections", { provider, action: "default" });
+            refresh();
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Could not save the default.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <option value="">Choose each time</option>
+        {configured.map((connection) => (
+          <option key={connection.id} value={connection.id}>
+            {connection.name}
+          </option>
+        ))}
+      </OptionSelect>
+      <p className="text-xs text-muted-foreground">
+        Preselected for trade replay, report estimates and unrealised P&L. You can still pick
+        another source each time.
+      </p>
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

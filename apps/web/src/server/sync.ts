@@ -6,8 +6,7 @@ import { accounts, db } from "@/db";
 import { decryptJson, encryptJson } from "./crypto";
 import { nowIso } from "./ids";
 import { insertExecutions, normalizeStoredOptionExecutions, type InsertResult } from "./executions";
-import { parseIbkrFlexSync, type IbkrFlexSyncResult } from "./ibkr-flex-sync";
-import { getImportTimeZone } from "./settings";
+import { IBKR_FLEX_TIME_ZONE, parseIbkrFlexSync, type IbkrFlexSyncResult } from "./ibkr-flex-sync";
 
 /** All broker connectivity goes through @luxalgo/broker-sdk, never direct API code. */
 export { listBrokers };
@@ -15,7 +14,7 @@ export { listBrokers };
 export interface SyncOutcome extends InsertResult {
   accountId: string;
   equity: number | null;
-  positions: number;
+  positions: number | null;
   syncedAt: string;
   warnings: string[];
   ibkrFlex?: IbkrFlexSyncResult["stats"];
@@ -62,7 +61,7 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
     account.broker === "ibkr-flex" && ibkrStatementXml
       ? parseIbkrFlexSync(ibkrStatementXml, {
           now: new Date(snapshot.fetchedAt),
-          timeZone: getImportTimeZone(),
+          timeZone: IBKR_FLEX_TIME_ZONE,
         })
       : undefined;
   const warnings = [...(ibkr?.warnings ?? [])];
@@ -71,6 +70,21 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
       "The Flex XML response could not be inspected, so spread identifiers and option expiration events were unavailable.",
     );
   }
+  // The SDK reports $0 and no positions when the Flex query omits those sections,
+  // which is indistinguishable from a flat account. Record them as unknown instead.
+  const flexSection = (section: RegExp) =>
+    account.broker !== "ibkr-flex" || !ibkrStatementXml || section.test(ibkrStatementXml);
+  const reportsPositions = flexSection(/<OpenPositions[\s>/]/);
+  const reportsCash = flexSection(/<CashReport[\s>/]/);
+  const reportsEquity = reportsPositions && reportsCash;
+  const missingSections = [
+    reportsPositions ? "" : "Open Positions",
+    reportsCash ? "" : "Cash Report",
+  ].filter(Boolean);
+  if (missingSections.length)
+    warnings.push(
+      `The Flex query has no ${missingSections.join(" or ")} section, so broker ${reportsPositions ? "equity is" : "positions and equity are"} unavailable. In IBKR Account Management → Flex Queries, add ${missingSections.join(" and ")} to this query (Open Positions at Summary level).`,
+    );
   const rows: ImportedExecution[] =
     ibkr?.executions.length ||
     snapshot.accounts.every((brokerAccount) => brokerAccount.trades.length === 0)
@@ -103,7 +117,7 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
       result.skippedReasons.push(`${untimed} fill(s) had no usable timestamp.`);
   }
 
-  const equity = snapshot.accounts.reduce((total, a) => total + a.equity, 0);
+  const equity = reportsEquity ? snapshot.accounts.reduce((total, a) => total + a.equity, 0) : null;
   const positions = snapshot.accounts.flatMap((a) =>
     a.positions.map((position) => {
       const instrument = resolveOptionInstrument({
@@ -120,7 +134,11 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
   db.update(accounts)
     .set({
       lastSyncAt: syncedAt,
-      snapshotJson: JSON.stringify({ equity, positions, fetchedAt: snapshot.fetchedAt }),
+      snapshotJson: JSON.stringify({
+        equity,
+        positions: reportsPositions ? positions : null,
+        fetchedAt: snapshot.fetchedAt,
+      }),
     })
     .where(eq(accounts.id, accountId))
     .run();
@@ -129,7 +147,7 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
     accountId,
     ...result,
     equity,
-    positions: positions.length,
+    positions: reportsPositions ? positions.length : null,
     syncedAt,
     warnings,
     ...(ibkr ? { ibkrFlex: ibkr.stats } : {}),

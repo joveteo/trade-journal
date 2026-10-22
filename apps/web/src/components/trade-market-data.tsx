@@ -4,16 +4,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Vela } from "@luxalgo/vela";
 import {
   RESOLUTIONS,
-  type MarketConnection,
+  type MarketConnectionsState,
   type ExcursionEstimate,
   type Resolution,
   type TradeMarketResult,
 } from "@/lib/market-data";
 import { providerInfo } from "@/lib/market-providers";
 import type { MarketCsvDataset } from "@/lib/market-csv";
+import { replayOverlayFills } from "@/lib/excursions";
 import { replayFrame } from "@/lib/trade-replay";
 import { useApi } from "@/lib/use-api";
-import { fmtMoney } from "@/lib/utils";
+import { fmtMoney, fmtNumber } from "@/lib/utils";
 import { TradeChart, type ChartExecution, type ChartTrade } from "./trade-chart";
 import { usePrivacy } from "./privacy";
 import { Button } from "./ui/button";
@@ -33,11 +34,12 @@ export function TradeMarketData({
   const { data: saved, refresh: refreshSaved } = useApi<{
     saved: { estimate: ExcursionEstimate } | null;
   }>(`/api/trades/${encodeURIComponent(trade.key)}/market-data`);
-  const { data: connections, error: connectionError } = useApi<{ connections: MarketConnection[] }>(
+  const { data: connections, error: connectionError } = useApi<MarketConnectionsState>(
     "/api/market-data/connections",
   );
   const available = connections?.connections.filter((connection) => connection.configured) ?? [];
-  const [provider, setProvider] = useState("");
+  const [chosenProvider, setProvider] = useState<string | null>(null);
+  const provider = chosenProvider ?? connections?.defaultProvider ?? "";
   const [symbol, setSymbol] = useState(trade.symbol);
   const [dataset, setDataset] = useState("");
   const [resolution, setResolution] = useState<Resolution>("1m");
@@ -217,8 +219,12 @@ export function TradeMarketData({
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {info?.description} {info?.symbolHint} Option contract history is not supported
-                  yet.
+                  {info?.description} {info?.symbolHint}{" "}
+                  {provider === "tastytrade"
+                    ? "Option trades try contract candles first. Verticals load both legs and subtract them into a net-premium series; if a leg is missing, the underlying is used for replay, fill markers stay off, and MAE/MFE stays unavailable."
+                    : provider
+                      ? "Option contract history is not supported yet."
+                      : ""}
                 </p>
                 <label className="flex items-start gap-2 text-xs text-muted-foreground">
                   <input
@@ -377,9 +383,13 @@ function HistoricalReplay({
     if (count >= history.bars.length || privacy) setPlaying(false);
   }, [count, privacy, history.bars.length]);
   const complete = count === history.bars.length;
+  const overlayFills = useMemo(
+    () => replayOverlayFills(history, trade.symbol, executions),
+    [history, trade.symbol, executions],
+  );
   const frame = useMemo(
-    () => replayFrame(history, history.estimate.priceBasisMismatch ? [] : executions, count),
-    [history, executions, count],
+    () => replayFrame(history, overlayFills, count),
+    [history, overlayFills, count],
   );
   return (
     <Card>
@@ -398,11 +408,20 @@ function HistoricalReplay({
           </p>
         ) : (
           <>
-            {history.estimate.priceBasisMismatch && (
+            {history.priceKind === "underlying" ? (
               <p role="status" className="rounded-md border p-3 text-sm text-muted-foreground">
-                The market candles and recorded fill prices do not match. Replay shows market
-                prices; fill labels and MAE/MFE estimates are withheld. See the data limits below.
+                Underlying candles are shown because option history was unavailable. Fill markers
+                are hidden so option premiums are not plotted on the index or stock scale. MAE/MFE
+                stays unavailable. See the data limits below.
               </p>
+            ) : (
+              history.estimate.priceBasisMismatch && (
+                <p role="status" className="rounded-md border p-3 text-sm text-muted-foreground">
+                  The market candles and recorded fill prices do not match. Fill markers still
+                  overlay at your net premium; MAE/MFE estimates stay unavailable. See the data
+                  limits below.
+                </p>
+              )
             )}
             <ReplayChart history={history} nextFrame={frame} />
             <div className="flex flex-wrap items-center gap-2">
@@ -551,7 +570,7 @@ function ReplayChart({
                 x: Date.parse(fill.executedAt),
                 y: fill.price,
                 yloc: "price" as const,
-                text: `${fill.side.toUpperCase()} ${fill.quantity}`,
+                text: `${fill.side.toUpperCase()} ${fill.quantity} @ ${fmtNumber(fill.price, 2)}`,
                 style: "label_left" as const,
                 color: fill.side === "buy" ? "#087f23" : "#bd2626",
                 textColor: "#ffffff",
@@ -582,7 +601,7 @@ function ReplayChart({
         height: 420,
         theme: dark() ? "dark" : "light",
         priceStyle: "candles",
-        volume: true,
+        volume: false,
         drawings: false,
       });
       chart.current = instance;
