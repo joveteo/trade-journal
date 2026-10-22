@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  isIbkrFlexXml,
-  parseIbkrFlexSync,
-  parseIbkrFlexXmlImport,
-} from "../src/server/ibkr-flex-sync";
+import { parseIbkrFlexSync, parseIbkrFlexXmlImport } from "../src/server/ibkr-flex-sync";
+import { looksLikeFlexXml } from "../src/server/ibkr-flex-xml-import";
 
 const statement = (body: string) =>
   `<FlexQueryResponse><FlexStatements><FlexStatement accountId="U1">${body}</FlexStatement></FlexStatements></FlexQueryResponse>`;
@@ -55,10 +52,10 @@ describe("IBKR Flex sync enrichment", () => {
     const result = parseIbkrFlexSync(
       statement(`
         <Trades>
-          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251106C06800000" dateTime="20251106;104027" buySell="SELL" quantity="-1" tradePrice="1.32" ibCommission="-1.64" taxes="-0.15" transactionID="a" openCloseIndicator="O" />
-          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251106C06800000" dateTime="20251106;104027" buySell="SELL" quantity="-1" tradePrice="1.32" ibCommission="-0.94" taxes="-0.08" transactionID="b" openCloseIndicator="O" />
-          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251106C06815000" dateTime="20251106;104027" buySell="BUY" quantity="1" tradePrice="0.62" ibCommission="-1.55" taxes="-0.14" transactionID="c" openCloseIndicator="O" />
-          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251106C06815000" dateTime="20251106;104027" buySell="BUY" quantity="1" tradePrice="0.62" ibCommission="-0.85" taxes="-0.08" transactionID="d" openCloseIndicator="O" />
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251113C06800000" dateTime="20251113;104027" buySell="SELL" quantity="-1" tradePrice="1.32" ibCommission="-1.64" taxes="-0.15" transactionID="a" openCloseIndicator="O" />
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251113C06800000" dateTime="20251113;104027" buySell="SELL" quantity="-1" tradePrice="1.32" ibCommission="-0.94" taxes="-0.08" transactionID="b" openCloseIndicator="O" />
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251113C06815000" dateTime="20251113;104027" buySell="BUY" quantity="1" tradePrice="0.62" ibCommission="-1.55" taxes="-0.14" transactionID="c" openCloseIndicator="O" />
+          <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  251113C06815000" dateTime="20251113;104027" buySell="BUY" quantity="1" tradePrice="0.62" ibCommission="-0.85" taxes="-0.08" transactionID="d" openCloseIndicator="O" />
         </Trades>
       `),
     );
@@ -86,9 +83,9 @@ describe("IBKR Flex sync enrichment", () => {
   it("derives SPX cash settlement and clamps pre-window closing quantity", () => {
     const result = parseIbkrFlexSync(
       statement(`
-        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  250919C06655000" dateTime="20250919;104715" buySell="SELL" quantity="-1" tradePrice="2.22" ibCommission="-1.64" openCloseIndicator="O" />
-        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  250919C06655000" dateTime="20250919;162000" buySell="BUY" quantity="2" tradePrice="0" ibCommission="-0.20" multiplier="100" costBasis="441.180933" fifoPnlRealized="-1430.819067" transactionType="BookTrade" openCloseIndicator="C" notes="A" />
-        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  250919C06655000" dateTime="20250919;162000" buySell="BUY" quantity="2" tradePrice="0" multiplier="100" costBasis="441.180933" fifoPnlRealized="-1430.819067" transactionType="BookTrade" openCloseIndicator="C" notes="A" />
+        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  250926C06655000" dateTime="20250926;104715" buySell="SELL" quantity="-1" tradePrice="2.22" ibCommission="-1.64" openCloseIndicator="O" />
+        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  250926C06655000" dateTime="20250926;162000" buySell="BUY" quantity="2" tradePrice="0" ibCommission="-0.20" multiplier="100" costBasis="441.180933" fifoPnlRealized="-1430.819067" transactionType="BookTrade" openCloseIndicator="C" notes="A" />
+        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  250926C06655000" dateTime="20250926;162000" buySell="BUY" quantity="2" tradePrice="0" multiplier="100" costBasis="441.180933" fifoPnlRealized="-1430.819067" transactionType="BookTrade" openCloseIndicator="C" notes="A" />
       `),
       new Date("2025-09-20T00:00:00Z"),
     );
@@ -135,7 +132,7 @@ describe("IBKR Flex sync enrichment", () => {
     const xml = statement(`
       <Trade accountId="U1" assetCategory="STK" symbol="NVDA" dateTime="20260102;100000" buySell="SELL" quantity="-4" tradePrice="133.91" openCloseIndicator="C" transactionID="tx-close" />
     `);
-    expect(isIbkrFlexXml(xml)).toBe(true);
+    expect(looksLikeFlexXml(xml)).toBe(true);
     const result = parseIbkrFlexXmlImport(xml, "Asia/Singapore");
     expect(result.format).toBe("ibkr-flex-xml");
     expect(result.executions).toEqual([
@@ -174,10 +171,10 @@ describe("IBKR Flex sync enrichment", () => {
   it("keeps same-second partial fills with different transaction ids during live sync", () => {
     const result = parseIbkrFlexSync(
       statement(`
-        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260204C06935000" dateTime="20260204;122146" buySell="SELL" quantity="-1" tradePrice="0.97" transactionID="a" openCloseIndicator="O" />
-        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260204C06935000" dateTime="20260204;122146" buySell="SELL" quantity="-1" tradePrice="0.97" transactionID="b" openCloseIndicator="O" />
-        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260204C06935000" dateTime="20260204;122146" buySell="SELL" quantity="-1" tradePrice="0.97" transactionID="c" openCloseIndicator="O" />
-        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260204C06935000" dateTime="20260204;162000" buySell="BUY" quantity="3" tradePrice="0" transactionID="exp" openCloseIndicator="C" notes="Ep" transactionType="BookTrade" multiplier="100" cost="291" fifoPnlRealized="291" />
+        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260211C06935000" dateTime="20260211;122146" buySell="SELL" quantity="-1" tradePrice="0.97" transactionID="a" openCloseIndicator="O" />
+        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260211C06935000" dateTime="20260211;122146" buySell="SELL" quantity="-1" tradePrice="0.97" transactionID="b" openCloseIndicator="O" />
+        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260211C06935000" dateTime="20260211;122146" buySell="SELL" quantity="-1" tradePrice="0.97" transactionID="c" openCloseIndicator="O" />
+        <Trade accountId="U1" assetCategory="OPT" symbol="SPXW  260211C06935000" dateTime="20260211;162000" buySell="BUY" quantity="3" tradePrice="0" transactionID="exp" openCloseIndicator="C" notes="Ep" transactionType="BookTrade" multiplier="100" cost="291" fifoPnlRealized="291" />
       `),
       new Date("2026-02-05T00:00:00Z"),
     );

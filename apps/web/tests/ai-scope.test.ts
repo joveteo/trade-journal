@@ -155,6 +155,8 @@ it("does not widen an empty account or empty filter result", async () => {
 });
 
 it("applies every supported journal filter using the same predicate as the visible day", async () => {
+  // Asset class is derived from executions on rebuild; annotations live on the trade.
+  db.update(executions).set({ assetClass: "equity" }).where(eq(executions.accountId, "a")).run();
   db.update(trades)
     .set({
       tagsJson: '["setup"]',

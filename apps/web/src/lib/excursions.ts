@@ -1,3 +1,4 @@
+import { netVerticalExecutions, parseVerticalSymbol } from "@luxalgo/journal-core";
 import { RESOLUTIONS, type ExcursionEstimate, type MarketHistory } from "./market-data";
 
 interface Fill {
@@ -7,11 +8,37 @@ interface Fill {
   executedAt: string;
 }
 interface Trade {
+  symbol?: string;
   direction: string;
   openedAt: string;
   closedAt?: string | null;
   assetClass?: string | null;
   contractMultiplier?: number | null;
+}
+
+/** Verticals journal two contract prints; market candles are the net package. */
+export function fillsForMarketPrices<T extends Fill>(symbol: string | undefined, fills: T[]): T[] {
+  if (!symbol || !parseVerticalSymbol(symbol)) return fills;
+  // Netting cannot tell the side of a zero-premium pair (both legs expiring
+  // worthless) and labels it "buy". Such a pair always reduces the open position.
+  const original = new Set<T>(fills);
+  let position = 0;
+  return netVerticalExecutions(fills).map((fill) => {
+    const reduce = !original.has(fill) && fill.price === 0 && position !== 0;
+    const side = reduce ? (position > 0 ? "sell" : "buy") : fill.side;
+    position += side === "buy" ? fill.quantity : -fill.quantity;
+    return side === fill.side ? fill : { ...fill, side };
+  });
+}
+
+/** Replay labels use the same prices as MAE/MFE, never option premiums on underlying candles. */
+export function replayOverlayFills<T extends Fill>(
+  history: Pick<MarketHistory, "priceKind">,
+  symbol: string | undefined,
+  fills: T[],
+): T[] {
+  if (history.priceKind === "underlying") return [];
+  return fillsForMarketPrices(symbol, fills).filter((fill) => fill.price !== 0);
 }
 
 /** Gross position-equity excursions: realized cash flows + value of the remaining position.
@@ -33,9 +60,10 @@ export function estimateExcursions(
     warnings: [reason],
   });
   const candleDuration = RESOLUTIONS[history.resolution];
+  const pricedFills = fillsForMarketPrices(trade.symbol, fills);
   // A coarse sanity check, not proof that currencies, contracts or adjustments match.
   // Reject a conspicuous mismatch even if the user checked the confirmation box.
-  for (const fill of fills) {
+  for (const fill of pricedFills) {
     const time = Date.parse(fill.executedAt);
     let lo = 0,
       hi = history.bars.length;
@@ -46,12 +74,12 @@ export function estimateExcursions(
     }
     const candidate = history.bars[lo - 1];
     const bar = candidate && candidate.time + candleDuration > time ? candidate : undefined;
-    if (!bar || !Number.isFinite(fill.price)) continue;
+    if (!bar || !Number.isFinite(fill.price) || fill.price === 0) continue;
     const distance = Math.max(bar.low - fill.price, fill.price - bar.high, 0);
     if (distance > 0.2 * Math.max(Math.abs(bar.close), Math.abs(fill.price), 1e-9)) {
       return {
         ...empty(
-          "Recorded fills differ by more than 20% from matching market candles. Check for demo trades, a different instrument, quote currency or price adjustment basis. MAE/MFE estimates and fill labels are unavailable until the prices are reconciled.",
+          "Recorded fills differ by more than 20% from matching market candles. Check for demo trades, a different instrument, quote currency or price adjustment basis. MAE/MFE estimates are unavailable until the prices are reconciled.",
         ),
         priceBasisMismatch: true,
       };
@@ -73,7 +101,7 @@ export function estimateExcursions(
   const open = Date.parse(trade.openedAt),
     close = Date.parse(trade.closedAt);
   const step = RESOLUTIONS[history.resolution];
-  const sorted = fills
+  const sorted = pricedFills
     .map((fill) => ({ ...fill, time: Date.parse(fill.executedAt) }))
     .sort((a, b) => a.time - b.time);
   if (

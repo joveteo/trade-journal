@@ -98,13 +98,13 @@ describe("execution storage preserves a coherent journal", () => {
       quantity: 1,
       price: 0.62,
       fee: 1.55,
-      executedAt: "2026-04-10T14:30:00Z",
+      executedAt: "2026-04-17T14:30:00Z",
     };
     insertExecutions(
       "test",
       [
-        { ...common, symbol: "SPXW  260410C06865000" },
-        { ...common, symbol: "SPXW 10APR26 6865 C", assetClass: "option" },
+        { ...common, symbol: "SPXW  260417C06865000" },
+        { ...common, symbol: "SPXW 17APR26 6865 C", assetClass: "option" },
       ],
       "sync",
     );
@@ -114,7 +114,7 @@ describe("execution storage preserves a coherent journal", () => {
       .select()
       .from(trades)
       .all()
-      .find((trade) => trade.symbol.includes("260410C"))!;
+      .find((trade) => trade.symbol.includes("260417C"))!;
     db.update(trades)
       .set({ notes: "Keep the pre-migration review", tagsJson: '["spread"]' })
       .where(eq(trades.key, legacyTrade.key))
@@ -126,13 +126,13 @@ describe("execution storage preserves a coherent journal", () => {
     });
     expect(db.select().from(executions).all()).toEqual([
       expect.objectContaining({
-        symbol: "SPXW 10APR26 6865 C",
+        symbol: "SPXW 17APR26 6865 C",
         assetClass: "option",
       }),
     ]);
     expect(db.select().from(trades).all()).toEqual([
       expect.objectContaining({
-        symbol: "SPXW 10APR26 6865 C",
+        symbol: "SPXW 17APR26 6865 C",
         assetClass: "option",
         notes: "Keep the pre-migration review",
         tagsJson: '["spread"]',
@@ -150,7 +150,7 @@ describe("execution storage preserves a coherent journal", () => {
       quantity: 1,
       price: 0.62,
       fee: 1.55,
-      executedAt: "2026-04-10T14:30:00Z",
+      executedAt: "2026-04-17T14:30:00Z",
     };
     const metadata = {
       id: "ibkr-trade:U1:transaction-1",
@@ -162,13 +162,13 @@ describe("execution storage preserves a coherent journal", () => {
         transactionId: "transaction-1",
       },
     };
-    insertExecutions("test", [{ ...common, symbol: "SPXW  260410C06865000" }], "sync");
+    insertExecutions("test", [{ ...common, symbol: "SPXW  260417C06865000" }], "sync");
     insertExecutions(
       "test",
       [
         {
           ...common,
-          symbol: "SPXW 10APR26 6865 C",
+          symbol: "SPXW 17APR26 6865 C",
           assetClass: "option",
           importMetadata: metadata,
         },
@@ -184,7 +184,7 @@ describe("execution storage preserves a coherent journal", () => {
     const saved = db.select().from(executions).all();
     expect(saved).toEqual([
       expect.objectContaining({
-        symbol: "SPXW 10APR26 6865 C",
+        symbol: "SPXW 17APR26 6865 C",
         assetClass: "option",
       }),
     ]);
@@ -195,13 +195,13 @@ describe("execution storage preserves a coherent journal", () => {
 
   it("keeps same-price option partials that have different broker ids", () => {
     const row = (id: string) => ({
-      symbol: "SPXW 10APR26 6865 C",
+      symbol: "SPXW 17APR26 6865 C",
       assetClass: "option" as const,
       side: "sell" as const,
       quantity: 1,
       price: 0.62,
       fee: 1.55,
-      executedAt: "2026-04-10T14:30:00Z",
+      executedAt: "2026-04-17T14:30:00Z",
       importMetadata: {
         id: `ibkr-trade:U1:${id}`,
         group: "ibkr-account:U1",
@@ -255,7 +255,7 @@ describe("execution storage preserves a coherent journal", () => {
       [
         row(
           "long-open",
-          "GOOGL 18SEP26 337.5 P",
+          "GOOGL 25SEP26 337.5 P",
           "buy",
           3.35,
           "2026-09-11T11:24:44Z",
@@ -265,7 +265,7 @@ describe("execution storage preserves a coherent journal", () => {
         ),
         row(
           "short-open",
-          "GOOGL 18SEP26 340 P",
+          "GOOGL 25SEP26 340 P",
           "sell",
           4.35,
           "2026-09-11T11:24:44Z",
@@ -275,20 +275,20 @@ describe("execution storage preserves a coherent journal", () => {
         ),
         row(
           "long-close",
-          "GOOGL 18SEP26 337.5 P",
+          "GOOGL 25SEP26 337.5 P",
           "sell",
           1.6,
-          "2026-09-14T09:56:57Z",
+          "2026-09-21T09:56:57Z",
           2,
           "C",
           "close-combo",
         ),
         row(
           "short-close",
-          "GOOGL 18SEP26 340 P",
+          "GOOGL 25SEP26 340 P",
           "buy",
           2.27,
-          "2026-09-14T09:56:57Z",
+          "2026-09-21T09:56:57Z",
           3,
           "C",
           "close-combo",
@@ -300,7 +300,7 @@ describe("execution storage preserves a coherent journal", () => {
     const saved = db.select().from(trades).all();
     expect(saved).toEqual([
       expect.objectContaining({
-        symbol: "GOOGL 18SEP26 337.5/340 P VERTICAL",
+        symbol: "GOOGL 25SEP26 337.5/340 P VERTICAL",
         direction: "long",
         status: "win",
         executionCount: 4,
@@ -338,18 +338,18 @@ describe("execution storage preserves a coherent journal", () => {
     insertExecutions(
       "test",
       [
-        imported("long-open", "GOOGL 18SEP26 337.5 P", "buy", 3.35, "2026-09-11T11:24:44Z", 0, "O"),
-        imported("short-open", "GOOGL 18SEP26 340 P", "sell", 4.35, "2026-09-11T11:34:44Z", 1, "O"),
+        imported("long-open", "GOOGL 25SEP26 337.5 P", "buy", 3.35, "2026-09-11T11:24:44Z", 0, "O"),
+        imported("short-open", "GOOGL 25SEP26 340 P", "sell", 4.35, "2026-09-11T11:34:44Z", 1, "O"),
         imported(
           "long-close",
-          "GOOGL 18SEP26 337.5 P",
+          "GOOGL 25SEP26 337.5 P",
           "sell",
           1.6,
-          "2026-09-14T09:56:57Z",
+          "2026-09-21T09:56:57Z",
           2,
           "C",
         ),
-        imported("short-close", "GOOGL 18SEP26 340 P", "buy", 2.27, "2026-09-14T09:56:57Z", 3, "C"),
+        imported("short-close", "GOOGL 25SEP26 340 P", "buy", 2.27, "2026-09-21T09:56:57Z", 3, "C"),
       ],
       "import",
     );
@@ -376,7 +376,7 @@ describe("execution storage preserves a coherent journal", () => {
 
     expect(db.select().from(trades).all()).toEqual([
       expect.objectContaining({
-        symbol: "GOOGL 18SEP26 337.5/340 P VERTICAL",
+        symbol: "GOOGL 25SEP26 337.5/340 P VERTICAL",
         notes: "Vertical review",
         tagsJson: '["spread"]',
       }),

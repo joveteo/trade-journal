@@ -1,5 +1,5 @@
 import { readFilters } from "@luxalgo/journal-core";
-import { computeMetrics } from "@luxalgo/journal-core";
+import { computeMetrics, netReturnOnEntry } from "@luxalgo/journal-core";
 import { handler, ok } from "@/server/api";
 import { getTimeZone } from "@/server/settings";
 import { queryTradeModels, queryTrades, type TradeFilters } from "@/server/trades-query";
@@ -38,10 +38,7 @@ export const GET = handler(async (request: Request) => {
       const value = (trade: typeof a): string | number | boolean | null => {
         if (sortKey === "rating") return trade.annotations?.rating ?? null;
         if (sortKey === "reviewed") return trade.annotations?.reviewed ?? false;
-        if (sortKey === "roi") {
-          const notional = trade.avgEntry * trade.quantity * (trade.contractMultiplier ?? 1);
-          return notional > 0 ? trade.netPnl / notional : 0;
-        }
+        if (sortKey === "roi") return netReturnOnEntry(trade);
         const candidate = trade[sortKey as keyof typeof trade];
         return typeof candidate === "string" ||
           typeof candidate === "number" ||
@@ -72,6 +69,7 @@ export const GET = handler(async (request: Request) => {
         key: trade.key,
         accountId: trade.accountId,
         symbol: trade.symbol,
+        assetClass: trade.assetClass ?? null,
         contractMultiplier: trade.contractMultiplier ?? null,
         direction: trade.direction,
         status: trade.status,

@@ -11,25 +11,67 @@ export interface DashboardPreferences {
 
 export type DashboardCardSize = "small" | "medium" | "wide" | "full";
 
+/** Overview shows every card; focused presets keep the rest available in Customize. */
+export function dashboardLayoutPresets(ids: string[]) {
+  return [
+    {
+      name: "Overview",
+      description: "All cards in the original order.",
+      order: [],
+    },
+    {
+      name: "Trading day",
+      description: "Calendar and recent trades first, then daily results.",
+      order: [8, 9, 0, 1, 3, 7, 15],
+    },
+    {
+      name: "Performance",
+      description: "Returns, win rate, equity, and your trading edge.",
+      order: [0, 1, 2, 4, 6, 7, 5, 15],
+    },
+    {
+      name: "Risk review",
+      description: "Drawdown, streaks, expectancy, and daily swings.",
+      order: [10, 11, 12, 14, 6, 7],
+    },
+  ].map(({ order, ...preset }) => {
+    const selected = order.map((id) => `widget-${id}`);
+    return {
+      ...preset,
+      arrangement: normalizeArrangement(
+        {
+          order: selected,
+          hidden: selected.length ? ids.filter((id) => !selected.includes(id)) : [],
+        },
+        ids,
+      ),
+    };
+  });
+}
+
 /**
  * Fill each responsive grid row without changing card order. Any columns left
- * over before the next card are shared across the cards already in that row.
+ * over before the next card are shared across the cards already in that row,
+ * except cards with `stretch: false`, which keep their base width.
  */
 export function balancedDashboardSpans(
-  cards: { id: string; size: DashboardCardSize; layoutGroup?: string }[],
+  cards: { id: string; size: DashboardCardSize; layoutGroup?: string; stretch?: boolean }[],
   columns: number,
   base: Record<DashboardCardSize, number>,
 ): Record<string, number> {
   const spans: Record<string, number> = {};
+  const fixed = new Set(cards.filter((card) => card.stretch === false).map((card) => card.id));
   let row: string[] = [];
   let used = 0;
   let group: string | undefined;
 
   const finishRow = () => {
     if (!row.length) return;
-    let remaining = columns - used;
+    const growable = row.filter((id) => !fixed.has(id));
+    let remaining = growable.length ? columns - used : 0;
     for (let index = 0; remaining > 0; index++, remaining--)
-      spans[row[index % row.length]!] = (spans[row[index % row.length]!] ?? 0) + 1;
+      spans[growable[index % growable.length]!] =
+        (spans[growable[index % growable.length]!] ?? 0) + 1;
     row = [];
     used = 0;
     group = undefined;

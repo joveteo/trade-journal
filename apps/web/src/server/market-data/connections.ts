@@ -7,6 +7,7 @@ import { alpaca } from "./alpaca";
 import { binance, coinbase } from "./public-crypto";
 import { oanda } from "./oanda";
 import { csvDatasets, marketCsv } from "./csv";
+import { tastytrade } from "./tastytrade";
 import { MarketDataError, type MarketDataProvider } from "./provider";
 const providers: MarketDataProvider[] = [
   londonStrategicEdge,
@@ -14,6 +15,7 @@ const providers: MarketDataProvider[] = [
   binance,
   coinbase,
   oanda,
+  tastytrade,
   marketCsv,
 ].sort((a, b) => a.name.localeCompare(b.name));
 export const providerFor = (id: string) => {
@@ -67,6 +69,21 @@ export const connections = (): MarketConnection[] =>
       source,
     };
   });
+const DEFAULT_KEY = "marketData:default";
+/** The saved default while it is still connected; otherwise the only connected source. */
+export const defaultProvider = (list = connections()): string | null => {
+  const configured = list.filter((connection) => connection.configured);
+  const saved = getSetting(DEFAULT_KEY);
+  if (saved && configured.some((connection) => connection.id === saved)) return saved;
+  return configured.length === 1 ? configured[0]!.id : null;
+};
+export function saveDefaultProvider(id: string | null) {
+  if (id === null) return deleteSetting(DEFAULT_KEY);
+  providerFor(id);
+  if (!connections().some((connection) => connection.id === id && connection.configured))
+    throw new MarketDataError("Connect this market data source before making it the default.");
+  setSetting(DEFAULT_KEY, id);
+}
 export function connectionKey(id: string): string {
   providerFor(id);
   const info = providerInfo(id)!;
@@ -123,5 +140,7 @@ export function validateCredentials(id: string, input: unknown): string {
   }
   if (id === "oanda" && !/^[0-9-]{3,80}$/.test(values.accountId!))
     throw new MarketDataError("Enter your OANDA v20 account ID.");
+  if (id === "tastytrade" && (values.refreshToken!.length < 20 || values.clientSecret!.length < 20))
+    throw new MarketDataError("Enter your Tastytrade OAuth client secret and refresh token.");
   return id === "london-strategic-edge" ? values.apiKey! : JSON.stringify(values);
 }

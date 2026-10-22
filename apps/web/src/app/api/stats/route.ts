@@ -16,8 +16,10 @@ import {
 } from "@luxalgo/journal-core";
 import { asc } from "drizzle-orm";
 import { accounts, db, playbooks } from "@/db";
+import { calendarRunningPnl } from "@/lib/calendar-insights";
 import { handler, ok } from "@/server/api";
-import { getTimeZone } from "@/server/settings";
+import { getTimeZone, getCurrencyConversion } from "@/server/settings";
+import { currencyProjection } from "@/server/currency-conversion";
 import { queryTradeModels, type TradeFilters } from "@/server/trades-query";
 
 type StatsView = "dashboard" | "overview" | "full";
@@ -34,19 +36,31 @@ export const GET = handler(async (request: Request) => {
   const timeZone = getTimeZone();
   const filters: TradeFilters = readFilters(url.searchParams);
 
-  const trades = queryTradeModels(filters);
+  const originalTrades = queryTradeModels(filters);
   const accountRows = db.select().from(accounts).orderBy(asc(accounts.createdAt)).all();
   const selected = filters.accounts
-    ? accountRows.filter((a) => filters.accounts!.split(",").includes(a.id))
+    ? accountRows.filter((a) =>
+        filters
+          .accounts!.split(",")
+          .map((id) => id.trim())
+          .includes(a.id),
+      )
     : accountRows;
-  const initialBalance = selected.reduce((total, a) => total + a.initialBalance, 0);
+  const {
+    trades,
+    initialBalance,
+    scope: currencyScope,
+  } = currencyProjection(originalTrades, selected, getCurrencyConversion());
 
   const accountCurrencies = new Map(accountRows.map((a) => [a.id, a.currency]));
+  const currencies = currencyScope.monetary
+    ? [currencyScope.currency ?? "USD"]
+    : currencyScope.sourceCurrencies;
   const directory =
     view === "dashboard"
       ? {}
       : {
-          currencies: [...new Set(trades.map((t) => accountCurrencies.get(t.accountId) ?? "USD"))],
+          currencies,
           accounts: accountRows.map((a) => ({ id: a.id, name: a.name })),
           playbooks: db.select({ id: playbooks.id, name: playbooks.name }).from(playbooks).all(),
         };
@@ -63,25 +77,53 @@ export const GET = handler(async (request: Request) => {
           duration: byDuration(trades),
           direction: byDirection(trades),
         };
+  if (view === "overview") return ok({ timeZone, ...directory, currencyScope, buckets });
+
+  const { metrics, days, equity } = computeOverview(trades, { timeZone, initialBalance });
 
   const today = dayKeyOf(new Date().toISOString(), timeZone);
   const calendarYear = Number(url.searchParams.get("calYear") ?? today.slice(0, 4));
   const calendarMonthNum = Number(url.searchParams.get("calMonth") ?? today.slice(5, 7));
-
-  if (view === "overview") return ok({ timeZone, ...directory, buckets });
-
-  const { metrics, days, equity } = computeOverview(trades, { timeZone, initialBalance });
+  const calendarPrefix = `${calendarYear}-${String(calendarMonthNum).padStart(2, "0")}`;
+  const calendarTrades = trades.filter(
+    (trade) =>
+      trade.status !== "open" &&
+      trade.closedAt &&
+      dayKeyOf(trade.closedAt, timeZone).startsWith(calendarPrefix),
+  );
   return ok({
     timeZone,
     ...directory,
-    metrics,
-    edgeScore: computeEdgeScore(metrics),
+    currencies,
+    currencyScope,
+    currencyGroups: currencyScope.monetary
+      ? []
+      : currencyScope.sourceCurrencies.map((currency) => {
+          const groupAccounts = selected.filter((account) => account.currency === currency);
+          const groupTrades = originalTrades.filter(
+            (trade) => accountCurrencies.get(trade.accountId) === currency,
+          );
+          return {
+            currency,
+            metrics: computeOverview(groupTrades, {
+              timeZone,
+              initialBalance: groupAccounts.reduce(
+                (sum, account) => sum + account.initialBalance,
+                0,
+              ),
+            }).metrics,
+          };
+        }),
+    metrics: currencyScope.monetary ? metrics : null,
+    edgeScore: currencyScope.monetary ? computeEdgeScore(metrics) : null,
     days,
     dailyCumulative: dailyCumulativeFromDays(days),
     ...(view === "full" ? { equity } : {}),
     calendar: calendarMonthFromDays(days, calendarYear, calendarMonthNum),
+    calendarCurrencies: currencies,
+    runningPnl: currencyScope.monetary ? calendarRunningPnl(calendarTrades, timeZone) : {},
     buckets,
-    openPositions: trades
+    openPositions: originalTrades
       .filter((t) => t.status === "open")
       .map((t) => ({
         key: t.key,
@@ -90,8 +132,9 @@ export const GET = handler(async (request: Request) => {
         openedAt: t.openedAt,
         quantity: t.openQuantity,
         avgEntry: t.avgEntry,
+        currency: accountCurrencies.get(t.accountId) ?? "USD",
       })),
-    recentTrades: [...trades]
+    recentTrades: [...(currencyScope.monetary ? trades : originalTrades)]
       .filter((t) => t.status !== "open")
       .sort((a, b) => (b.closedAt ?? "").localeCompare(a.closedAt ?? ""))
       .slice(0, 10)
@@ -100,6 +143,9 @@ export const GET = handler(async (request: Request) => {
         symbol: t.symbol,
         closedAt: t.closedAt,
         netPnl: t.netPnl,
+        currency: currencyScope.monetary
+          ? (currencyScope.currency ?? "USD")
+          : (accountCurrencies.get(t.accountId) ?? "USD"),
         status: t.status,
       })),
     initialBalance,

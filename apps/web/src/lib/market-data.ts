@@ -26,6 +26,12 @@ export interface MarketConnection {
   source: "environment" | "saved" | "public" | "uploaded" | null;
 }
 
+/** `/api/market-data/connections`: the default is preselected wherever a source is chosen. */
+export interface MarketConnectionsState {
+  connections: MarketConnection[];
+  defaultProvider: string | null;
+}
+
 export interface MarketHistory {
   quoteCurrency?: string;
   datasetId?: string;
@@ -36,6 +42,8 @@ export interface MarketHistory {
   fetchedAt: string;
   truncated: boolean;
   warnings: string[];
+  /** Underlying candles used when option history is missing. Estimates and fill overlays stay off. */
+  priceKind?: "instrument" | "underlying";
 }
 
 export interface ExcursionEstimate {

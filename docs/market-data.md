@@ -1,16 +1,18 @@
 # Historical market data
 
 Market data is an optional, user-configured input. Vela remains the chart renderer;
-broker sync remains responsible for executions. No provider is enabled or selected
-by default. No API key or provider history is shipped with the project.
+broker sync remains responsible for executions. No provider is enabled by default.
+No API key or provider history is shipped with the project.
 
 ## Connect and use
 
 1. Open **Settings → Market data** and choose a supported connection or upload a
    candle CSV. Configure or enable a connection only if you want to use it, then
    select **Test connection**. Environment credentials, when deliberately configured,
-   take precedence over saved credentials.
-2. Open a closed trade. Select a provider, its exact symbol, and candle resolution.
+   take precedence over saved credentials. With one connected source, it is
+   preselected wherever a source is chosen. With several, pick a **Default source**
+   (or **Choose each time**); a default that is later disconnected is ignored.
+2. Open a closed trade. Confirm the provider, its exact symbol, and candle resolution.
    Select a feed where required; an optional dataset can disambiguate instruments.
    Broker-specific symbols are not silently translated.
 3. Select **Load market data**. This makes provider requests and uses your plan's
@@ -43,12 +45,20 @@ which may represent closed sessions or missing data. It does not claim full tick
 No number is returned for missing entry/exit coverage, truncated history, no usable
 complete candles, missing required multipliers, unmatched position cycles, or an
 unconfirmed price basis. Reversing executions spanning multiple cycles are currently
-unsupported. Option contract history needs a separate adapter capability and is
-explicitly unavailable; underlying prices cannot substitute for option premiums.
-LSE stock/ETF candles are split adjusted, so unadjusted historical fills cannot be
+unsupported. Tastytrade can request option-contract candles. Two-leg verticals rebuild
+each replay bar as the sold contract's **mark** minus the bought contract's mark (mid
+bid/ask), not last prints. Last-trade candles leave an untraded hedge at 0, so a
+0.65 credit spread is drawn as the 4–5 short call. A winning credit can still decay
+to 0 into the close. MAE/MFE compares the net spread premium and ignores $0
+expiration prints. When a contract series is missing, the adapter loads the
+underlying instead, withholds MAE/MFE, and omits fill markers so premium fills are
+never plotted against index or stock prices.
+Other connectors still do not request option history. LSE stock/ETF candles are split
+adjusted, so unadjusted historical fills cannot be
 compared directly without reconciliation. Fills more than 20% outside the matching
-candle price range trigger a mismatch warning, with estimates and fill overlays
-withheld. This catches conspicuous demo-data or price-basis mismatches; it is not
+candle price range trigger a mismatch warning, with estimates withheld. Fill markers
+still overlay at the recorded premium so you can compare them to the candles. This
+catches conspicuous demo-data or price-basis mismatches; it is not
 a substitute for verifying the instrument and currency yourself.
 
 Replay reveals a completed candle at each step, with fills through its close time.
@@ -63,6 +73,8 @@ the rest of the trade detail page still contains the original trade's outcome.
 - `server/market-data/provider.ts`: provider interface for history and access checks.
 - `server/market-data/connections.ts`: adapter registry and encrypted key storage.
 - `server/market-data/london-strategic-edge.ts`: LSE REST transport and normalization.
+- `server/market-data/tastytrade.ts`: OAuth access, dxLink candles, vertical combine, option-to-underlying fallback.
+- `lib/tastytrade-symbols.ts`: journal option/vertical symbols to dxFeed streamer symbols.
 - `lib/excursions.ts`: deterministic provider-independent calculation.
 - `lib/trade-replay.ts`: chart input sliced at the replay cursor.
 - `components/trade-market-data.tsx`: source controls and Vela rendering.
@@ -70,7 +82,7 @@ the rest of the trade detail page still contains the original trade's outcome.
 Add another adapter to the registry to expose it through the same connection and
 trade controls. Provider-specific authentication and normalization stay in the adapter.
 The current generic interface covers candles and connection tests; symbol discovery,
-tick replay, option contracts, and exchange-calendar coverage are future capabilities.
+tick replay, and exchange-calendar coverage are future capabilities.
 
 Saved keys use the journal's AES-256-GCM credential storage. Browser status responses
 contain only configuration state. Requests go from the server to fixed provider origins
@@ -118,6 +130,22 @@ Existing estimates calculated before persistence was added need to be loaded onc
 again. Unchecking the calculation box loads candles/replay only and does not erase
 an earlier saved estimate. Replay starts at 4× speed.
 
+## Unrealised P&L on the dashboard
+
+The dashboard's Unrealised P&L card prices the open positions that match the current
+filters. Nothing is requested until you choose a price source and select **Refresh
+prices**. Each position's recorded symbol is requested sequentially: 1-minute candles
+from the last three hours, falling back to hourly candles from the last ten days when
+markets are closed. The latest close is compared with the position's average entry,
+times the remaining quantity and contract multiplier. Fees are excluded.
+
+A position is listed as not priced, never counted as zero, when the provider does not
+support its asset class, no candles are returned, only underlying prices are available
+for an option, the quote currency differs from the account, or a derivative has no
+multiplier. Up to 50 positions are priced per refresh, and requests stop after three
+consecutive provider errors. The total is shown only when every priced position shares
+one account currency. Results are not saved and reset when the filters change.
+
 ## Supported sources
 
 Configure these under **Settings → Market data**. Connections are used only for
@@ -125,14 +153,15 @@ market prices; they do not create broker-sync accounts, place orders, or change 
 Public sources require an explicit Enable source action. No source is contacted just
 because Settings or Reports is opened.
 
-| Source                | Setup                                                                                                   | Symbols and coverage                                                                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Alpaca                | Key ID and secret, or `ALPACA_API_KEY` + `ALPACA_SECRET_KEY`                                            | US stocks such as `AAPL`; choose IEX or SIP. Prices are raw/unadjusted. Choose Crypto for `BTC/USD`.                                                      |
-| Binance               | Enable source; no key                                                                                   | Binance spot pairs such as `BTCUSDT`, through its public market-data host. No futures or automatic quote-currency conversion.                             |
-| Coinbase              | Enable source; no key                                                                                   | Coinbase Exchange spot products such as `BTC-USD`. Empty intervals may have no candles.                                                                   |
-| London Strategic Edge | API key in Settings, or `LSE_API_KEY`                                                                   | Historical candles for supported instruments and datasets; coverage depends on provider access.                                                           |
-| Market data CSV       | Upload and preview local candle files                                                                   | Exact recorded symbol and resolution, with declared quote currency and price basis.                                                                       |
-| OANDA                 | v20 token, account ID, and Practice/Live; or `OANDA_API_TOKEN`, `OANDA_ACCOUNT_ID`, `OANDA_ENVIRONMENT` | Instruments such as `EUR_USD`. Complete midpoint candles aligned to UTC; volume is price-update count. Multiplier must match the imported quantity units. |
+| Source                | Setup                                                                                                                                      | Symbols and coverage                                                                                                                                                                                                                                                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Alpaca                | Key ID and secret, or `ALPACA_API_KEY` + `ALPACA_SECRET_KEY`                                                                               | US stocks such as `AAPL`; choose IEX or SIP. Prices are raw/unadjusted. Choose Crypto for `BTC/USD`.                                                                                                                                                                                                                                           |
+| Binance               | Enable source; no key                                                                                                                      | Binance spot pairs such as `BTCUSDT`, through its public market-data host. No futures or automatic quote-currency conversion.                                                                                                                                                                                                                  |
+| Coinbase              | Enable source; no key                                                                                                                      | Coinbase Exchange spot products such as `BTC-USD`. Empty intervals may have no candles.                                                                                                                                                                                                                                                        |
+| London Strategic Edge | API key in Settings, or `LSE_API_KEY`                                                                                                      | Historical candles for supported instruments and datasets; coverage depends on provider access.                                                                                                                                                                                                                                                |
+| Market data CSV       | Upload and preview local candle files                                                                                                      | Exact recorded symbol and resolution, with declared quote currency and price basis.                                                                                                                                                                                                                                                            |
+| OANDA                 | v20 token, account ID, and Practice/Live; or `OANDA_API_TOKEN`, `OANDA_ACCOUNT_ID`, `OANDA_ENVIRONMENT`                                    | Instruments such as `EUR_USD`. Complete midpoint candles aligned to UTC; volume is price-update count. Multiplier must match the imported quantity units.                                                                                                                                                                                      |
+| Tastytrade            | OAuth client secret and refresh token, Live/Sandbox; or `TASTYTRADE_CLIENT_SECRET` + `TASTYTRADE_REFRESH_TOKEN` + `TASTYTRADE_ENVIRONMENT` | US stocks (`AAPL`), cash indexes (`SPX` / `$SPX`), and equity options. Journal option/vertical symbols are accepted. Verticals combine both contract candles into a net-premium series; missing option history falls back to the underlying for replay and estimates stay withheld. History is typically capped near the latest 8,000 candles. |
 
 Credential sets are encrypted together. Environment credentials take precedence;
 partial environment configuration is shown as unavailable rather than mixing values
@@ -184,6 +213,7 @@ also removes its saved derived estimates, leaving all trade executions intact.
 - [Binance market-data-only endpoints](https://developers.binance.com/en/docs/products/spot/faqs/market_data_only)
 - [Coinbase Exchange candles](https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-product-candles)
 - [OANDA candle endpoints](https://developer.oanda.com/rest-live-v20/pricing-ep/) and [environments](https://developer.oanda.com/rest-live-v20/development-guide/)
+- [tastytrade OAuth2](https://developer.tastytrade.com/docs/authentication/oauth2) and [DXLink streaming candles](https://developer.tastytrade.com/docs/concepts/streaming/)
 
 ## Performance and request limits
 

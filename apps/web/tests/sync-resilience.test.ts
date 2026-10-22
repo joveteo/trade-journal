@@ -171,7 +171,7 @@ describe("one odd broker record does not fail the whole sync", () => {
       id: string,
       quantity = 1,
       side: "buy" | "sell" = "buy",
-      executedAt = "2026-02-04T12:21:46.000Z",
+      executedAt = "2026-02-11T12:21:46.000Z",
     ) => ({
       symbol: "NVDA",
       side,
@@ -187,7 +187,7 @@ describe("one odd broker record does not fail the whole sync", () => {
         broker: { provider: "ibkr-flex" as const, kind: "trade" as const, transactionId: id },
       },
     });
-    const fills = [partial("a"), partial("b"), partial("c", 2, "sell", "2026-02-04T16:20:00.000Z")];
+    const fills = [partial("a"), partial("b"), partial("c", 2, "sell", "2026-02-11T16:20:00.000Z")];
     expect(insertExecutions("broker", fills, "sync")).toMatchObject({ inserted: 3, duplicates: 0 });
     expect(insertExecutions("broker", fills, "import")).toMatchObject({
       inserted: 0,
@@ -199,12 +199,12 @@ describe("one odd broker record does not fail the whole sync", () => {
 
   it("raises a clamped close to the imported quantity and does not shrink it later", () => {
     const close = (quantity: number) => ({
-      symbol: "SPXW 04FEB26 6935 C",
+      symbol: "SPXW 11FEB26 6935 C",
       side: "buy" as const,
       quantity,
       price: 0,
       fee: 0,
-      executedAt: "2026-02-04T16:20:00.000Z",
+      executedAt: "2026-02-11T16:20:00.000Z",
       assetClass: "option" as const,
       importMetadata: {
         id: "ibkr-trade:U1:exp",

@@ -1,6 +1,7 @@
 import { accounts, db } from "@/db";
 import { eq } from "drizzle-orm";
 import { bad, handler, ok, requireValue } from "@/server/api";
+import { providerAssetIssue } from "@/server/market-data/compatibility";
 import { connectionKey, providerFor } from "@/server/market-data/connections";
 import { MarketDataError } from "@/server/market-data/provider";
 import { getTradeByKey, rowToTrade } from "@/server/trades-query";
@@ -48,10 +49,8 @@ export const POST = handler(
       "Invalid response mode.",
     );
     requireValue(Boolean(row.closedAt), "Market replay is available for closed trades only.");
-    requireValue(
-      row.assetClass !== "option",
-      "Option contract history is not supported by this connector yet. An underlying's candles cannot stand in for option prices.",
-    );
+    const assetIssue = providerAssetIssue(body.provider, row.assetClass, body.dataset);
+    requireValue(!assetIssue, assetIssue!);
     const from = Date.parse(row.openedAt),
       to = Date.parse(row.closedAt!);
     requireValue(
@@ -60,22 +59,6 @@ export const POST = handler(
     );
     try {
       const provider = providerFor(body.provider);
-      if (["binance", "coinbase"].includes(provider.id))
-        requireValue(
-          row.assetClass == null || row.assetClass === "crypto",
-          "This provider supplies spot crypto candles only. Choose a crypto trade.",
-        );
-      if (provider.id === "alpaca")
-        requireValue(
-          row.assetClass == null ||
-            (body.dataset === "crypto" ? row.assetClass === "crypto" : row.assetClass === "equity"),
-          "Choose the Alpaca dataset that matches this trade's asset class.",
-        );
-      if (provider.id === "oanda")
-        requireValue(
-          row.assetClass == null || ["forex", "cfd"].includes(row.assetClass),
-          "OANDA supports forex and CFD instruments.",
-        );
       const trade = rowToTrade(row);
       const fingerprint = estimateFingerprint(trade);
       const history = await provider.history(
@@ -95,13 +78,24 @@ export const POST = handler(
         .where(eq(accounts.id, row.accountId))
         .get()?.currency;
       const currencyMatches = !history.quoteCurrency || history.quoteCurrency === accountCurrency;
-      const estimate = estimateExcursions(
-        trade,
-        listExecutions(row.accountId, trade.executionIds),
-        history,
-        body.basisConfirmed === true && currencyMatches,
-      );
-      if (!currencyMatches)
+      const estimate =
+        history.priceKind === "underlying"
+          ? {
+              mae: null,
+              mfe: null,
+              sampledBars: 0,
+              excludedBars: 0,
+              warnings: [
+                "Underlying candles are shown for replay. MAE/MFE needs option premium history that matches the fills.",
+              ],
+            }
+          : estimateExcursions(
+              trade,
+              listExecutions(row.accountId, trade.executionIds),
+              history,
+              body.basisConfirmed === true && currencyMatches,
+            );
+      if (!currencyMatches && history.priceKind !== "underlying")
         estimate.warnings.unshift(
           `The candle quote currency (${history.quoteCurrency}) differs from this account (${accountCurrency}). Monetary estimates are unavailable; no FX conversion is applied.`,
         );

@@ -1,19 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { Vela } from "@luxalgo/vela";
+import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw, SkipForward } from "lucide-react";
 import {
   RESOLUTIONS,
-  type MarketConnection,
+  type MarketConnectionsState,
   type ExcursionEstimate,
   type Resolution,
   type TradeMarketResult,
 } from "@/lib/market-data";
 import { providerInfo } from "@/lib/market-providers";
 import type { MarketCsvDataset } from "@/lib/market-csv";
+import { replayOverlayFills } from "@/lib/excursions";
 import { replayFrame } from "@/lib/trade-replay";
 import { useApi } from "@/lib/use-api";
-import { fmtMoney } from "@/lib/utils";
+import { fmtMoney, fmtNumber } from "@/lib/utils";
 import { TradeChart, type ChartExecution, type ChartTrade } from "./trade-chart";
 import { usePrivacy } from "./privacy";
 import { Button } from "./ui/button";
@@ -33,11 +35,12 @@ export function TradeMarketData({
   const { data: saved, refresh: refreshSaved } = useApi<{
     saved: { estimate: ExcursionEstimate } | null;
   }>(`/api/trades/${encodeURIComponent(trade.key)}/market-data`);
-  const { data: connections, error: connectionError } = useApi<{ connections: MarketConnection[] }>(
+  const { data: connections, error: connectionError } = useApi<MarketConnectionsState>(
     "/api/market-data/connections",
   );
   const available = connections?.connections.filter((connection) => connection.configured) ?? [];
-  const [provider, setProvider] = useState("");
+  const [chosenProvider, setProvider] = useState<string | null>(null);
+  const provider = chosenProvider ?? connections?.defaultProvider ?? "";
   const [symbol, setSymbol] = useState(trade.symbol);
   const [dataset, setDataset] = useState("");
   const [resolution, setResolution] = useState<Resolution>("1m");
@@ -217,8 +220,12 @@ export function TradeMarketData({
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {info?.description} {info?.symbolHint} Option contract history is not supported
-                  yet.
+                  {info?.description} {info?.symbolHint}{" "}
+                  {provider === "tastytrade"
+                    ? "Option trades try contract candles first. Verticals load both legs and subtract them into a net-premium series; if a leg is missing, the underlying is used for replay, fill markers stay off, and MAE/MFE stays unavailable."
+                    : provider
+                      ? "Option contract history is not supported yet."
+                      : ""}
                 </p>
                 <label className="flex items-start gap-2 text-xs text-muted-foreground">
                   <input
@@ -345,7 +352,7 @@ export function TradeMarketData({
   );
 }
 
-function HistoricalReplay({
+export function HistoricalReplay({
   history,
   trade,
   executions,
@@ -377,12 +384,16 @@ function HistoricalReplay({
     if (count >= history.bars.length || privacy) setPlaying(false);
   }, [count, privacy, history.bars.length]);
   const complete = count === history.bars.length;
+  const overlayFills = useMemo(
+    () => replayOverlayFills(history, trade.symbol, executions),
+    [history, trade.symbol, executions],
+  );
   const frame = useMemo(
-    () => replayFrame(history, history.estimate.priceBasisMismatch ? [] : executions, count),
-    [history, executions, count],
+    () => replayFrame(history, overlayFills, count),
+    [history, overlayFills, count],
   );
   return (
-    <Card>
+    <Card className="journal-replay-enter">
       <CardHeader>
         <CardTitle>Historical candles</CardTitle>
       </CardHeader>
@@ -398,53 +409,91 @@ function HistoricalReplay({
           </p>
         ) : (
           <>
-            {history.estimate.priceBasisMismatch && (
+            {history.priceKind === "underlying" ? (
               <p role="status" className="rounded-md border p-3 text-sm text-muted-foreground">
-                The market candles and recorded fill prices do not match. Replay shows market
-                prices; fill labels and MAE/MFE estimates are withheld. See the data limits below.
+                Underlying candles are shown because option history was unavailable. Fill markers
+                are hidden so option premiums are not plotted on the index or stock scale. MAE/MFE
+                stays unavailable. See the data limits below.
               </p>
+            ) : (
+              history.estimate.priceBasisMismatch && (
+                <p role="status" className="rounded-md border p-3 text-sm text-muted-foreground">
+                  The market candles and recorded fill prices do not match. Fill markers still
+                  overlay at your net premium; MAE/MFE estimates stay unavailable. See the data
+                  limits below.
+                </p>
+              )
             )}
             <ReplayChart history={history} nextFrame={frame} />
-            <div className="flex flex-wrap items-center gap-2">
+            <div
+              className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-2"
+              role="group"
+              aria-label="Candle replay controls"
+            >
               <Button
                 variant="outline"
+                size="icon"
+                aria-label="Restart replay"
                 onClick={() => {
                   setPlaying(false);
                   setCount(1);
                 }}
               >
-                Restart
+                <RotateCcw />
               </Button>
               <Button
+                variant="outline"
+                size="icon"
+                aria-label="Previous candle"
+                disabled={count <= 1}
+                onClick={() => {
+                  setPlaying(false);
+                  setCount((current) => Math.max(1, current - 1));
+                }}
+              >
+                <ChevronLeft />
+              </Button>
+              <Button
+                className="min-w-24"
+                disabled={history.bars.length <= 1}
                 onClick={() => {
                   if (complete) setCount(1);
                   setPlaying(!playing);
                 }}
               >
+                {playing ? <Pause /> : <Play />}
                 {playing ? "Pause" : "Play"}
               </Button>
               <Button
                 variant="outline"
+                size="icon"
+                aria-label="Next candle"
                 disabled={complete}
                 onClick={() => {
                   setPlaying(false);
                   setCount((current) => Math.min(current + 1, history.bars.length));
                 }}
               >
-                Next candle
+                <ChevronRight />
               </Button>
               <Button
                 variant="outline"
+                size="icon"
+                aria-label="Show all candles"
+                disabled={complete}
                 onClick={() => {
                   setPlaying(false);
                   setCount(history.bars.length);
                 }}
               >
-                Show all
+                <SkipForward />
               </Button>
+              <span className="mx-1 text-xs tabular-nums text-muted-foreground" aria-live="off">
+                {count.toLocaleString()} / {history.bars.length.toLocaleString()}
+              </span>
               <OptionSelect
                 aria-label="Replay speed"
-                className="w-24"
+                className="ml-auto w-20"
                 value={speed}
                 onValueChange={setSpeed}
               >
@@ -518,6 +567,8 @@ function ReplayChart({
   history: TradeMarketResult;
   nextFrame: ReturnType<typeof replayFrame<ChartExecution>>;
 }) {
+  // Chart-local identity also works on HTTP LAN origins without crypto.randomUUID.
+  const indicatorType = `replay-fills-${useId()}`;
   const host = useRef<HTMLDivElement>(null);
   const chart = useRef<Vela | null>(null);
   const frame = useRef(nextFrame);
@@ -525,15 +576,17 @@ function ReplayChart({
   latest.current = nextFrame;
   const update = useRef<(() => void) | null>(null);
   const [error, setError] = useState("");
+  const [ready, setReady] = useState(false);
   useEffect(() => {
     let disposed = false;
     let cleanup = () => {};
     setError("");
+    setReady(false);
     void (async () => {
       const { Vela, registerNativeIndicator, unregisterNativeIndicator } =
         await import("@luxalgo/vela");
       if (disposed || !host.current) return;
-      const type = `replay-fills-${crypto.randomUUID()}`;
+      const type = indicatorType;
       registerNativeIndicator({
         type,
         title: "Recorded fills",
@@ -551,7 +604,7 @@ function ReplayChart({
                 x: Date.parse(fill.executedAt),
                 y: fill.price,
                 yloc: "price" as const,
-                text: `${fill.side.toUpperCase()} ${fill.quantity}`,
+                text: `${fill.side.toUpperCase()} ${fill.quantity} @ ${fmtNumber(fill.price, 2)}`,
                 style: "label_left" as const,
                 color: fill.side === "buy" ? "#087f23" : "#bd2626",
                 textColor: "#ffffff",
@@ -582,7 +635,7 @@ function ReplayChart({
         height: 420,
         theme: dark() ? "dark" : "light",
         priceStyle: "candles",
-        volume: true,
+        volume: false,
         drawings: false,
       });
       chart.current = instance;
@@ -616,6 +669,8 @@ function ReplayChart({
         unregisterNativeIndicator(type);
         if (chart.current === instance) chart.current = null;
       };
+      await instance.ready();
+      if (!disposed) setReady(true);
     })().catch(() => {
       if (!disposed) setError("The historical chart could not be rendered.");
     });
@@ -623,7 +678,7 @@ function ReplayChart({
       disposed = true;
       cleanup();
     };
-  }, [history]);
+  }, [history, indicatorType]);
   useEffect(() => {
     update.current?.();
   }, [nextFrame, history]);
@@ -634,7 +689,20 @@ function ReplayChart({
           {error}
         </p>
       )}
-      <div ref={host} className="h-[420px] overflow-hidden rounded-lg border" />
+      <div
+        className="relative h-[420px] overflow-hidden rounded-lg border"
+        aria-busy={!ready && !error}
+      >
+        {!ready && !error && (
+          <div
+            className="absolute inset-0 flex items-center justify-center bg-muted/20 text-sm text-muted-foreground"
+            role="status"
+          >
+            Preparing candle replay…
+          </div>
+        )}
+        <div ref={host} className={`h-full ${ready ? "journal-replay-reveal" : "invisible"}`} />
+      </div>
     </>
   );
 }
