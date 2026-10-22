@@ -19,8 +19,8 @@ describe("option contract identity", () => {
       right: "C",
     });
     expect(formatOptionSymbol(parsed!)).toBe("AAPL 17JAN25 150 C");
-    expect(formatOptionSymbol(parseOptionSymbol("SPXW  260410C06865000")!)).toBe(
-      "SPXW 10APR26 6865 C",
+    expect(formatOptionSymbol(parseOptionSymbol("SPXW  260417C06865000")!)).toBe(
+      "SPXW 17APR26 6865 C",
     );
   });
 
@@ -40,16 +40,16 @@ describe("option contract identity", () => {
   });
 
   it("parses a journaled vertical and prices credit vs debit risk", () => {
-    expect(parseVerticalSymbol("SPXW 06NOV25 6800/6815 C VERTICAL")).toMatchObject({
+    expect(parseVerticalSymbol("SPXW 13NOV25 6800/6815 C VERTICAL")).toMatchObject({
       underlying: "SPXW",
-      expiry: "2025-11-06",
+      expiry: "2025-11-13",
       lowStrike: 6800,
       highStrike: 6815,
       right: "C",
       width: 15,
     });
     const soldCall = optionVerticalStats({
-      symbol: "SPXW 06NOV25 6800/6815 C VERTICAL",
+      symbol: "SPXW 13NOV25 6800/6815 C VERTICAL",
       direction: "short",
       quantity: 2,
       avgEntry: 0.7,
@@ -61,7 +61,7 @@ describe("option contract identity", () => {
     expect(soldCall!.maxLoss).toBeCloseTo(2860, 9);
     expect(soldCall!.capturedMaxProfit).toBeCloseTo(135.02 / 140, 9);
     const soldPut = optionVerticalStats({
-      symbol: "SPXW 05NOV25 6745/6760 P VERTICAL",
+      symbol: "SPXW 12NOV25 6745/6760 P VERTICAL",
       direction: "long",
       quantity: 2,
       avgEntry: 1.15,
