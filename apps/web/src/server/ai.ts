@@ -1,29 +1,22 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { APICallError, RetryError, generateText } from "ai";
 import {
+  aiProviderConfigured,
   getAiKey,
   getAiModel,
   getAiProvider,
-  getOpenAiBaseUrl,
-  openaiConfigured,
+  getCompatibleBaseUrl,
 } from "./settings";
-import {
-  AI_PROVIDER_NAMES,
-  OPENAI_DEFAULT_BASE_URL,
-  OPENAI_LOCAL_API_KEY,
-} from "@/lib/ai-settings";
+import { AI_PROVIDER_NAMES, type AiProvider } from "@/lib/ai-settings";
 
 /**
  * BYO-key AI. Self-hosted means YOUR key on YOUR box: the key is read from the
  * encrypted settings store (or the selected provider's environment variable).
- * OpenAI can also use a local OpenAI-compatible server (LM Studio, Ollama).
  * Requests go straight from this server to the selected provider.
  */
-export const aiConfigured = (): boolean => {
-  const provider = getAiProvider();
-  return provider === "openai" ? openaiConfigured() : getAiKey(provider) !== null;
-};
+export const aiConfigured = (): boolean => aiProviderConfigured(getAiProvider());
 
 const SYSTEM = `You are the reflection layer of a trader's journal.
 You see only the trader's own recorded data — trades, stats, and notes. Ground every
@@ -32,31 +25,33 @@ Be direct and specific like a good trading coach: name the behavior, cite the nu
 say what to keep and what to fix. No platitudes, no disclaimers about trading being risky —
 the trader knows. Keep it tight. Write plain Markdown (bold, lists). Do not use LaTeX, math mode, or \\text{}.`;
 
+const languageModel = (provider: AiProvider, apiKey: string | null, model: string) => {
+  if (provider === "compatible")
+    // Chat Completions is the API compatible servers share. Only the key saved for
+    // this server is sent: this adapter never reads provider environment variables.
+    return createOpenAICompatible({
+      name: "compatible",
+      baseURL: getCompatibleBaseUrl()!,
+      apiKey: apiKey ?? undefined,
+    })(model);
+  return provider === "openai"
+    ? createOpenAI({ apiKey: apiKey! }).responses(model)
+    : createAnthropic({ apiKey: apiKey! })(model);
+};
+
 export const runAi = async (prompt: string, maxOutputTokens = 1200): Promise<string> => {
   const provider = getAiProvider();
-  const compatibleUrl = provider === "openai" ? getOpenAiBaseUrl() : null;
-  const apiKey = getAiKey(provider) ?? (compatibleUrl ? OPENAI_LOCAL_API_KEY : null);
-  if (!apiKey) {
+  if (!aiProviderConfigured(provider)) {
     throw new Error(
-      `AI is not configured — add your ${AI_PROVIDER_NAMES[provider]} API key in Settings.`,
+      provider === "compatible"
+        ? "AI is not configured — add your OpenAI-compatible server URL and model in Settings."
+        : `AI is not configured — add your ${AI_PROVIDER_NAMES[provider]} API key in Settings.`,
     );
   }
-  const model = getAiModel(provider);
   try {
-    const openai =
-      provider === "openai"
-        ? createOpenAI({
-            apiKey,
-            baseURL: compatibleUrl ?? OPENAI_DEFAULT_BASE_URL,
-          })
-        : null;
     const result = await generateText({
-      model: openai
-        ? compatibleUrl
-          ? openai.chat(model)
-          : openai.responses(model)
-        : createAnthropic({ apiKey })(model),
-      ...(openai && !compatibleUrl ? { providerOptions: { openai: { store: false } } } : {}),
+      model: languageModel(provider, getAiKey(provider), getAiModel(provider)),
+      ...(provider === "openai" ? { providerOptions: { openai: { store: false } } } : {}),
       system: SYSTEM,
       prompt,
       maxOutputTokens,
@@ -83,6 +78,11 @@ export const runAi = async (prompt: string, maxOutputTokens = 1200): Promise<str
       )
         throw new Error(
           "AI model unavailable: check the model ID and your provider access in Settings.",
+        );
+      // No status code means no HTTP response: the server is down or the URL is wrong.
+      if (provider === "compatible" && error.statusCode === undefined)
+        throw new Error(
+          "AI server unreachable: check the server URL in Settings and that the server is running.",
         );
     }
     throw new Error("AI request failed. Check your provider settings or try again shortly.");

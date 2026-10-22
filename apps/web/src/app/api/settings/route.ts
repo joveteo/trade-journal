@@ -3,26 +3,21 @@ import { rebuildAccount } from "@/server/rebuild";
 import { handler, ok, requireValue } from "@/server/api";
 import {
   getMultipliers,
+  getCurrencyConversion,
   getTimeZone,
   getImportTimeZone,
   aiKeyEnvironment,
   aiModelSetting,
   getAiProvider,
   getAiSettings,
-  openaiBaseUrlEnvironment,
+  normalizeAiBaseUrl,
   setAiKey,
-  setOpenAiBaseUrl,
+  setCompatibleBaseUrl,
   setSetting,
 } from "@/server/settings";
-import {
-  AI_PROVIDERS,
-  AI_PROVIDER_NAMES,
-  isAiProvider,
-  isValidOpenAiBaseUrl,
-  parseOpenAiBaseUrl,
-  type AiProvider,
-} from "@/lib/ai-settings";
+import { AI_PROVIDERS, AI_PROVIDER_NAMES, isAiProvider, type AiProvider } from "@/lib/ai-settings";
 import { isTimeZone } from "@/lib/timezone";
+import { parseCurrencyConversion, type CurrencyConversion } from "@/lib/currencies";
 
 export const GET = handler((request?: Request) => {
   if (request && new URL(request.url).searchParams.get("scope") === "timezone")
@@ -31,6 +26,7 @@ export const GET = handler((request?: Request) => {
     timeZone: getTimeZone(),
     importTimeZone: getImportTimeZone(),
     multipliers: getMultipliers(),
+    currencyConversion: getCurrencyConversion(),
     ...getAiSettings(),
   });
 });
@@ -42,18 +38,58 @@ interface SettingsBody {
   /** Set to a key string to store (encrypted), or null to clear. Absent = unchanged. */
   anthropicKey?: string | null;
   openaiKey?: string | null;
+  compatibleKey?: string | null;
+  /** OpenAI-compatible API root. A different URL clears the saved key unless one is sent. */
+  compatibleBaseUrl?: string;
   aiProvider?: AiProvider;
   aiModel?: string;
-  /** OpenAI-compatible API root. Empty/null clears a saved URL. Absent = unchanged. */
-  openaiBaseUrl?: string | null;
+  currencyConversion?: CurrencyConversion;
 }
 
 export const PATCH = handler(async (request: Request) => {
   const body = (await request.json()) as SettingsBody;
   requireValue(body && typeof body === "object" && !Array.isArray(body), "Enter valid settings.");
+  let conversion: CurrencyConversion | undefined;
+  if (body.currencyConversion !== undefined) {
+    try {
+      conversion = parseCurrencyConversion(body.currencyConversion);
+    } catch (error) {
+      requireValue(false, error instanceof Error ? error.message : "Enter valid conversion rates.");
+    }
+    if (conversion.enabled) {
+      const missing = [
+        ...new Set(
+          db
+            .select({ currency: accounts.currency })
+            .from(accounts)
+            .all()
+            .map((account) => account.currency),
+        ),
+      ].filter(
+        (currency) => currency !== conversion!.reportingCurrency && !conversion!.rates[currency],
+      );
+      requireValue(
+        missing.length === 0,
+        `Enter conversion rates for ${missing.join(", ")} before enabling conversion.`,
+      );
+    }
+  }
   if (body.aiProvider !== undefined)
-    requireValue(isAiProvider(body.aiProvider), "Choose Anthropic or OpenAI.");
+    requireValue(
+      isAiProvider(body.aiProvider),
+      "Choose Anthropic, OpenAI or an OpenAI-compatible server.",
+    );
   const provider = body.aiProvider ?? getAiProvider();
+  const compatibleBaseUrl =
+    body.compatibleBaseUrl === undefined
+      ? undefined
+      : typeof body.compatibleBaseUrl === "string"
+        ? normalizeAiBaseUrl(body.compatibleBaseUrl)
+        : null;
+  requireValue(
+    compatibleBaseUrl !== null,
+    "Enter a valid server URL, such as http://localhost:11434/v1.",
+  );
   if (body.aiModel !== undefined)
     requireValue(
       typeof body.aiModel === "string" &&
@@ -76,17 +112,6 @@ export const PATCH = handler(async (request: Request) => {
       `${AI_PROVIDER_NAMES[id]} uses an environment key. Update or remove it on the server.`,
     );
   }
-  if (body.openaiBaseUrl !== undefined) {
-    requireValue(
-      body.openaiBaseUrl === null ||
-        (typeof body.openaiBaseUrl === "string" && isValidOpenAiBaseUrl(body.openaiBaseUrl)),
-      "Enter a valid http(s) OpenAI-compatible API base URL.",
-    );
-    requireValue(
-      !openaiBaseUrlEnvironment(),
-      "OpenAI uses OPENAI_BASE_URL from the server environment. Update or remove it on the server.",
-    );
-  }
   for (const key of ["timeZone", "importTimeZone"] as const)
     if (body[key] !== undefined)
       requireValue(
@@ -104,6 +129,7 @@ export const PATCH = handler(async (request: Request) => {
     );
   db.transaction(() => {
     // A display-only change must not silently alter the legacy import default.
+    if (conversion) setSetting("currencyConversion", JSON.stringify(conversion));
     if (body.timeZone !== undefined || body.importTimeZone !== undefined)
       setSetting("importTimeZone", body.importTimeZone ?? getImportTimeZone());
     if (body.timeZone !== undefined) setSetting("timeZone", body.timeZone);
@@ -119,10 +145,10 @@ export const PATCH = handler(async (request: Request) => {
       const key = body[`${id}Key`];
       if (key !== undefined) setAiKey(id, key);
     }
+    if (compatibleBaseUrl)
+      setCompatibleBaseUrl(compatibleBaseUrl, body.compatibleKey !== undefined);
     if (body.aiProvider !== undefined) setSetting("aiProvider", body.aiProvider);
     if (body.aiModel !== undefined) setSetting(aiModelSetting(provider), body.aiModel.trim());
-    if (body.openaiBaseUrl !== undefined)
-      setOpenAiBaseUrl(body.openaiBaseUrl === null ? null : parseOpenAiBaseUrl(body.openaiBaseUrl));
   });
   return ok({ saved: true });
 });

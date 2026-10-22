@@ -9,6 +9,7 @@ import {
   type ImportedExecution,
   type ParsedImport,
 } from "@luxalgo/journal-importers";
+import { untimedFillsReason } from "./broker-trades";
 
 type Attributes = Record<string, string>;
 
@@ -27,6 +28,8 @@ export interface IbkrFlexSyncResult {
     lifecycleEvents: number;
     lifecycleClosures: number;
     unresolvedLifecycleEvents: number;
+    /** Trade rows dropped for a missing field, a zero non-option price, or an unreadable time. */
+    skippedTrades: number;
     expiredContractsWithoutLifecycle: number;
     identifiedSpreadOrders: number;
   };
@@ -100,21 +103,56 @@ const number = (value: string | undefined): number | undefined => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+const wallClock = (instant: number, timeZone: string): string =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  })
+    .format(instant)
+    .replace(", ", " ");
+
 const flexTimestamp = (
   raw: string | undefined,
   timeZone: string,
   endOfDay = false,
 ): string | undefined => {
   if (!raw) return undefined;
-  let normalized = raw.trim();
-  const compactDate = normalized.match(/^(\d{4})(\d{2})(\d{2})$/);
-  if (compactDate) {
-    normalized = `${compactDate[1]}-${compactDate[2]}-${compactDate[3]}`;
-  } else if (/^\d{4}-\d{2}-\d{2};/.test(normalized)) {
-    normalized = normalized.replace(";", " ");
+  const value = raw.trim();
+  const dateOnly = value.match(/^(\d{4})-?(\d{2})-?(\d{2})$/);
+  const dateTime = value.match(
+    /^(\d{4})-?(\d{2})-?(\d{2})[;, T]?(\d{2}):?(\d{2}):?(\d{2})(Z|[+-]\d{2}:?\d{2})?$/,
+  );
+  // Anything else, such as a zone abbreviation suffix, would be a guess.
+  if (!dateOnly && !dateTime) return undefined;
+  const [, year, month, day, hour, minute, second, offset] = dateOnly
+    ? [...dateOnly, ...(endOfDay ? ["23", "59", "59"] : ["00", "00", "00"]), undefined]
+    : dateTime!;
+  const local = `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+  if (offset) {
+    // An explicit offset or Z keeps its instant regardless of the statement timezone.
+    const zone = offset.replace(/^([+-]\d{2})(\d{2})$/, "$1:$2");
+    const parsed = Date.parse(`${local.replace(" ", "T")}${zone}`);
+    return Number.isNaN(parsed) ? undefined : new Date(parsed).toISOString();
   }
-  if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(normalized)) normalized += " 23:59:59";
-  return parseTimestamp(normalized, timeZone) ?? undefined;
+  const parsed = parseTimestamp(local, timeZone);
+  if (!parsed) return undefined;
+  const instant = Date.parse(parsed);
+  // Reject invalid dates and daylight-saving gaps (the wall clock does not round-trip)
+  // and repeated hours (another instant shows the same wall clock).
+  if (wallClock(instant, timeZone) !== local) return undefined;
+  if (
+    [-3600e3, -1800e3, 1800e3, 3600e3].some(
+      (shift) => wallClock(instant + shift, timeZone) === local,
+    )
+  )
+    return undefined;
+  return parsed;
 };
 
 const brokerMetadata = (
@@ -360,6 +398,9 @@ export const parseIbkrFlexSync = (
   const warnings: string[] = [];
   const tradeExecutions: ImportedExecution[] = [];
   let unpricedClosingTrades = 0;
+  let zeroPriceTrades = 0;
+  let untimedTrades = 0;
+  let invalidTrades = 0;
 
   for (const [index, row] of statementElements(xml, "Trade").entries()) {
     const resolved = instrument(row);
@@ -386,22 +427,27 @@ export const parseIbkrFlexSync = (
     } else if (reportedPrice !== undefined) {
       broker.settlementPriceSource = "trade-price";
     }
+    // Outside option settlement a zero price is a transfer or corporate action, not a fill.
+    const zeroPrice = resolved.assetClass !== "option" && price === 0;
     if (
       !resolved.symbol ||
       (sideRaw !== "BUY" && sideRaw !== "SELL") ||
       quantity <= 0 ||
       price === undefined ||
       price < 0 ||
+      zeroPrice ||
       !executedAt
     ) {
-      if (
+      if (zeroPrice) zeroPriceTrades++;
+      else if (!executedAt && price !== undefined) untimedTrades++;
+      else if (
         resolved.assetClass === "option" &&
         broker.openCloseIndicator?.toUpperCase().startsWith("C") &&
         reportedPrice === 0 &&
         price === undefined
       ) {
         unpricedClosingTrades++;
-      }
+      } else invalidTrades++;
       continue;
     }
     broker.strategyGroupId = explicitStrategyGroup(broker);
@@ -422,6 +468,14 @@ export const parseIbkrFlexSync = (
       },
     });
   }
+  if (zeroPriceTrades + invalidTrades > 0)
+    warnings.push(
+      `${zeroPriceTrades + invalidTrades} Trade row(s) were skipped: a missing symbol, side, quantity or price, or a zero price outside option settlement.`,
+    );
+  if (untimedTrades > 0)
+    warnings.push(
+      `${untimedFillsReason(untimedTrades, true)} Flex dates must use the default yyyyMMdd date and HHmmss time formats.`,
+    );
   if (unpricedClosingTrades > 0) {
     warnings.push(
       `${unpricedClosingTrades} zero-price option closing fill(s) lacked both Cost Basis and Realized P/L, so their settlement value could not be determined and they were not journaled.`,
@@ -538,14 +592,12 @@ export const parseIbkrFlexSync = (
       lifecycleEvents: lifecycleRows.length,
       lifecycleClosures,
       unresolvedLifecycleEvents,
+      skippedTrades: zeroPriceTrades + untimedTrades + invalidTrades + unpricedClosingTrades,
       expiredContractsWithoutLifecycle: expiredWithoutLifecycle.length,
       identifiedSpreadOrders: spreadOrders.size || inferredSpreadOrders,
     },
   };
 };
-
-export const isIbkrFlexXml = (content: string): boolean =>
-  /^\s*<FlexQueryResponse\b/.test(content) && /<FlexStatement\b/.test(content);
 
 export const parseIbkrFlexXmlImport = (content: string, timeZone = "UTC"): ParsedImport => {
   const result = parseIbkrFlexSync(content, {
@@ -556,10 +608,14 @@ export const parseIbkrFlexXmlImport = (content: string, timeZone = "UTC"): Parse
   return {
     format: "ibkr-flex-xml",
     executions: result.executions,
-    skippedRows: result.stats.unresolvedLifecycleEvents,
+    skippedRows: result.stats.unresolvedLifecycleEvents + result.stats.skippedTrades,
     warnings: result.warnings,
     ...(result.executions.length === 0
-      ? { errors: ["No usable Trade or option lifecycle records were found in the Flex XML."] }
+      ? {
+          errors: [
+            "No usable Trade or option lifecycle records were found in the Flex XML. Include the Trades section at Execution level in the Flex Query.",
+          ],
+        }
       : {}),
   };
 };

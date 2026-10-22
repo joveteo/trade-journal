@@ -53,6 +53,15 @@ export interface ImportMetadata {
    */
   preserveFee?: boolean;
   broker?: BrokerExecutionMetadata;
+  /** Explicit Open/Close Long/Short facts from an execution CSV. */
+  position?: {
+    direction: "long" | "short";
+    effect: "open" | "close";
+    contract?: string;
+    positionId?: string;
+    executionId?: string;
+    sequence?: number;
+  };
   /** Persisted provenance for reviewed NinjaTrader executions. Labels are not identity. */
   ninjaTrader?: {
     sourceId: string;

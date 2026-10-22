@@ -31,6 +31,7 @@ const EXCEPTIONS = {
   // jsdom's test-only CSS helper: reviewed MIT No Attribution license grants
   // unrestricted use, modification and redistribution, without attribution.
   "@csstools/color-helpers": ["MIT-0"],
+  "@csstools/css-syntax-patches-for-csstree": ["MIT-0"],
 };
 
 const allowedExpression = (expression) => {

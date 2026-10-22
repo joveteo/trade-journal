@@ -12,7 +12,12 @@ import {
   type ColumnDef,
 } from "@tanstack/react-table";
 import { ArrowUpDown, Check, Columns3, Download, Tag, Trash2 } from "lucide-react";
-import { dayKeyOf, optionVerticalStats, type TradeMetrics } from "@luxalgo/journal-core";
+import {
+  dayKeyOf,
+  netReturnOnEntry,
+  optionVerticalStats,
+  type TradeMetrics,
+} from "@luxalgo/journal-core";
 import { FilterBar, useFilters } from "@/components/filter-bar";
 import { Pnl } from "@/components/pnl";
 import { MonetaryValue } from "@/components/privacy";
@@ -30,6 +35,7 @@ interface TradeRow {
   key: string;
   accountId: string;
   symbol: string;
+  assetClass: string | null;
   contractMultiplier: number | null;
   direction: "long" | "short";
   status: string;
@@ -194,12 +200,12 @@ function Trades() {
       },
       {
         id: "roi",
-        accessorFn: (row) => {
-          const entryNotional = row.avgEntry * row.quantity * (row.contractMultiplier ?? 1);
-          return entryNotional > 0 ? row.netPnl / entryNotional : 0;
-        },
+        accessorFn: (row) => netReturnOnEntry(row) ?? undefined,
+        sortDescFirst: true,
         header: "Net ROI",
-        cell: ({ getValue }) => <span className="tnum">{fmtPercent(getValue<number>(), 2)}</span>,
+        cell: ({ getValue }) => (
+          <span className="tnum">{fmtPercent(getValue<number | undefined>() ?? null, 2)}</span>
+        ),
       },
       {
         id: "width",
@@ -513,7 +519,10 @@ function Trades() {
                                 setPage(0);
                                 setSort((current) => ({
                                   id: header.column.id,
-                                  desc: current.id === header.column.id ? !current.desc : false,
+                                  desc:
+                                    current.id === header.column.id
+                                      ? !current.desc
+                                      : Boolean(header.column.columnDef.sortDescFirst),
                                 }));
                               }}
                             >

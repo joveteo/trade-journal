@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  isIbkrFlexXml,
-  parseIbkrFlexSync,
-  parseIbkrFlexXmlImport,
-} from "../src/server/ibkr-flex-sync";
+import { parseIbkrFlexSync, parseIbkrFlexXmlImport } from "../src/server/ibkr-flex-sync";
+import { looksLikeFlexXml } from "../src/server/ibkr-flex-xml-import";
 
 const statement = (body: string) =>
   `<FlexQueryResponse><FlexStatements><FlexStatement accountId="U1">${body}</FlexStatement></FlexStatements></FlexQueryResponse>`;
@@ -135,7 +132,7 @@ describe("IBKR Flex sync enrichment", () => {
     const xml = statement(`
       <Trade accountId="U1" assetCategory="STK" symbol="NVDA" dateTime="20260102;100000" buySell="SELL" quantity="-4" tradePrice="133.91" openCloseIndicator="C" transactionID="tx-close" />
     `);
-    expect(isIbkrFlexXml(xml)).toBe(true);
+    expect(looksLikeFlexXml(xml)).toBe(true);
     const result = parseIbkrFlexXmlImport(xml, "Asia/Singapore");
     expect(result.format).toBe("ibkr-flex-xml");
     expect(result.executions).toEqual([
