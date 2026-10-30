@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { FilterBar, useFilters } from "@/components/filter-bar";
 import { AddTradeDialog } from "@/components/add-trade-dialog";
+import { BenchmarkCard, BenchmarkPeriodsCard } from "@/components/benchmark-cards";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { MonetaryValue } from "@/components/privacy";
 import { Pnl } from "@/components/pnl";
@@ -107,7 +108,7 @@ export default function DashboardPage() {
 }
 
 function Dashboard() {
-  const { query } = useFilters();
+  const { query, from, to } = useFilters();
   const { data, loading, error, refresh } = useApi<StatsPayload>(
     `/api/stats?view=dashboard&${query}`,
   );
@@ -121,6 +122,8 @@ function Dashboard() {
         error={error}
         refresh={refresh}
         query={query}
+        from={from}
+        to={to}
       />
     </>
   );
@@ -132,12 +135,16 @@ function DashboardContent({
   error,
   refresh,
   query,
+  from,
+  to,
 }: {
   data: StatsPayload | null;
   loading: boolean;
   error: string | null;
   refresh: () => void;
   query: string;
+  from: string | null;
+  to: string | null;
 }) {
   if (loading && !data) return <DashboardSkeleton />;
   if (!data)
@@ -475,6 +482,17 @@ function DashboardContent({
             ),
           },
           {
+            id: "widget-17",
+            label: "Equity vs benchmark",
+            size: "wide",
+            layoutGroup: "visuals",
+            content: (
+              <Card className="dashboard-visual-card h-full">
+                <BenchmarkCard query={query} from={from} to={to} />
+              </Card>
+            ),
+          },
+          {
             id: "widget-7",
             label: "Daily P&L",
             size: "medium",
@@ -770,6 +788,17 @@ function DashboardContent({
                   query={query}
                   openPositions={data.openPositions.length}
                 />
+              </Card>
+            ),
+          },
+          {
+            id: "widget-18",
+            label: "Period to date vs benchmark",
+            size: "full",
+            layoutGroup: "full",
+            content: (
+              <Card className="h-full">
+                <BenchmarkPeriodsCard query={query} />
               </Card>
             ),
           },

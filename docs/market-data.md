@@ -146,6 +146,28 @@ multiplier. Up to 50 positions are priced per refresh, and requests stop after t
 consecutive provider errors. The total is shown only when every priced position shares
 one account currency. Results are not saved and reset when the filters change.
 
+## Benchmark comparison on the dashboard
+
+**Equity vs benchmark** and **Period to date vs benchmark** compare realized net P&L
+with buying SPY or QQQ. Daily closes come from the first connected source among
+Tastytrade, Alpaca (IEX feed) and London Strategic Edge, and load when the dashboard
+opens. Closes and dividends are kept in server memory for 30 minutes, then refetched.
+
+- **Return basis.** With Tastytrade, cash dividends are reinvested at the ex-date close,
+  so the benchmark is a total return. Other sources are labelled price return.
+- **Anchor and capital.** Each window starts at the last session close before it,
+  with the account's initial balance plus P&L realized before that close. The benchmark
+  line is that equity held in the ETF; the strategy line is realized P&L since the anchor.
+- **Sessions.** Strategy P&L is bucketed by US session date: trades closed after
+  16:00 ET count on the next session, and weekend or holiday P&L on the next session.
+  Unrealized P&L is not included.
+- **Statistics.** Returns are on the anchor equity. Max drawdown compares the account
+  equity curve with the benchmark's. Beta and correlation use daily returns and need at
+  least 20 sessions.
+- **Scope.** The main card follows the dashboard date range; the period card always
+  uses this week, month, quarter and year. Both follow account and trade filters, need a
+  positive initial balance, and are USD only, with no FX conversion.
+
 ## Supported sources
 
 Configure these under **Settings → Market data**. Connections are used only for

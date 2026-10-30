@@ -26,8 +26,8 @@ export function dashboardLayoutPresets(ids: string[]) {
     },
     {
       name: "Performance",
-      description: "Returns, win rate, equity, and your trading edge.",
-      order: [0, 1, 2, 4, 6, 7, 5, 15],
+      description: "Returns, win rate, equity vs benchmark, and your trading edge.",
+      order: [0, 1, 2, 4, 6, 17, 7, 5, 18, 15],
     },
     {
       name: "Risk review",
