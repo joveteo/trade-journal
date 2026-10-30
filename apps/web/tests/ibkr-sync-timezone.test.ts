@@ -116,6 +116,25 @@ describe("IBKR Flex live sync timezone", () => {
       expect.objectContaining({ executedAt: "2026-01-02T15:00:00.000Z" }),
     ]);
   });
+
+  it("keeps identical executions and skips the order rows that repeat them", async () => {
+    const row = (side: string, quantity: number, price: number, time: string, extra: string) =>
+      `<Trade assetCategory="STK" symbol="NVDA" buySell="${side}" quantity="${quantity}" tradePrice="${price}" dateTime="${time}" ${extra} />`;
+    mockSync(
+      `<FlexQueryResponse><FlexStatements><FlexStatement accountId="U1">${[
+        row("BUY", 1, 100, "20260102;100000", 'levelOfDetail="EXECUTION" transactionID="tx-1"'),
+        row("BUY", 1, 100, "20260102;100000", 'levelOfDetail="EXECUTION" transactionID="tx-2"'),
+        row("BUY", 2, 100, "20260102;100000", 'levelOfDetail="ORDER"'),
+        row("SELL", 2, 102, "20260102;110000", 'levelOfDetail="EXECUTION" transactionID="tx-3"'),
+        row("SELL", 2, 102, "20260102;110000", 'levelOfDetail="ORDER"'),
+      ].join("")}</FlexStatement></FlexStatements></FlexQueryResponse>`,
+    );
+
+    expect(await syncAccount("ibkr")).toMatchObject({ inserted: 3 });
+    expect(db.select().from(trades).all()).toEqual([
+      expect.objectContaining({ quantity: 2, openQuantity: 0, grossPnl: 4 }),
+    ]);
+  });
 });
 
 describe("IBKR Flex live sync snapshot", () => {

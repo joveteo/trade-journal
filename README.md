@@ -151,6 +151,13 @@ reports them in; re-syncing corrects fills stored under an earlier default. Uplo
 Flex XML uses the statement timezone chosen for the file. See
 [IBKR live sync](docs/importers.md#live-sync).
 
+Webull sync reads about a year of order history, and Binance futures sync the last three months. A
+synced fill that closes a position opened before that history is skipped, or kept only for the part
+the history covers, and the sync reports it, rather than showing a position that never existed.
+Webull options that expired while held close at 0 at the 4pm New York expiry. In Binance hedge mode,
+a long and a short held at once on one symbol stay separate trades. A Binance quarterly contract held
+to delivery stays open, because delivery leaves no fill.
+
 ## Screenshots
 
 Captured from the local app with generated demo trades and fictional prop firm records. Expand a view to inspect it at full width.
