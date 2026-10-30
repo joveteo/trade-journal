@@ -376,6 +376,39 @@ function tastytradeResult(
   };
 }
 
+export interface Dividend {
+  /** Ex-dividend date, YYYY-MM-DD. */
+  date: string;
+  amount: number;
+}
+
+/** Historic cash dividends by ex-date, used to build total-return benchmarks. */
+export async function tastytradeDividends(
+  symbol: string,
+  key: string,
+  signal?: AbortSignal,
+): Promise<Dividend[]> {
+  if (!/^[A-Z][A-Z0-9.]{0,9}$/.test(symbol))
+    throw new MarketDataError("Use a plain equity or ETF symbol such as SPY.");
+  const { config, access } = await accessToken(key, signal);
+  const payload = record(
+    (await restJson(
+      `${config.base}/market-metrics/historic-corporate-events/dividends/${symbol}`,
+      { headers: headers(access), signal },
+      { allow404: true },
+    )) ?? {},
+  );
+  const items = payload.data ? record(payload.data).items : [];
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      const row = record(item);
+      return { date: String(row["occurred-date"] ?? ""), amount: number(row.amount) };
+    })
+    .filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date) && row.amount > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export const tastytrade: MarketDataProvider = {
   id: "tastytrade",
   name: "Tastytrade",
