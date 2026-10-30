@@ -46,6 +46,16 @@ export const executionProblem = (row: unknown, source: ExecutionSource): string 
   if (!isFiniteNumber(r.fee ?? 0)) return `${label}: fee must be a finite number.`;
   if (typeof r.executedAt !== "string" || !Number.isFinite(Date.parse(r.executedAt)))
     return `${label}: timestamp is missing or invalid.`;
+  if (
+    r.occurrence !== undefined &&
+    (source === "manual" || !Number.isSafeInteger(r.occurrence) || r.occurrence < 1)
+  )
+    return `${label}: invalid copy number for an identical fill.`;
+  if (
+    r.hashQuantity !== undefined &&
+    (source !== "sync" || !isFiniteNumber(r.hashQuantity) || r.hashQuantity <= r.quantity)
+  )
+    return `${label}: invalid reported quantity for a fill kept in part.`;
   const meta = r.importMetadata;
   const broker = meta?.broker;
   const brokerOk =
@@ -120,14 +130,20 @@ export const partitionExecutions = (
 const isIbkrFlexExecution = (row: ImportedExecution): boolean =>
   row.importMetadata?.broker?.provider === "ibkr-flex";
 
+/** A hedge-mode side (Binance) is its own position, so its group must stay in the hash. */
+const isHedgeSideExecution = (row: ImportedExecution): boolean =>
+  row.importMetadata?.group?.startsWith("sync-hedge:") ?? false;
+
 /**
  * IBKR's broker ID is stable across XML upload and live sync, so both paths
  * must use it. Other sync providers retain normalized-fill hashing because
  * their metadata may become richer between snapshots.
  */
-const storedExecutionHash = (row: ImportedExecution, source: ExecutionSource): string =>
+export const storedExecutionHash = (row: ImportedExecution, source: ExecutionSource): string =>
   executionHash(
-    source === "import" || isIbkrFlexExecution(row) ? row : { ...row, importMetadata: undefined },
+    source === "import" || isIbkrFlexExecution(row) || isHedgeSideExecution(row)
+      ? row
+      : { ...row, importMetadata: undefined },
   );
 
 /**
