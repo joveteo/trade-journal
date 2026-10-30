@@ -8,6 +8,10 @@ allowBuilds:
   better-sqlite3: false
 ignoredOptionalDependencies:
   - sharp
+overrides:
+  "vite@>=7.0.0 <7.3.7": "7.3.7"
+  "undici@>=7.0.0 <7.29.1": "^7.29.1"
+  "source-map-js@<1.2.2": "^1.2.2"
 minimumReleaseAgeExclude:
   - "@ai-sdk/openai@4.0.64"
   - "@ai-sdk/provider-utils@5.0.38"
