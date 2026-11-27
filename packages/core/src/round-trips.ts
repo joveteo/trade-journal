@@ -59,18 +59,19 @@ const consumeLots = (cycle: OpenCycle, quantity: number, method: ProfitCalcMetho
     const scale = totalQty > 0 ? (totalQty - quantity) / totalQty : 0;
     cycle.lots = cycle.lots
       .map((lot) => ({ ...lot, quantity: lot.quantity * scale }))
-      .filter((lot) => lot.quantity > FLAT_EPS);
+      .filter((lot) => lot.quantity > 0);
     return matchedNotional;
   }
 
-  while (remaining > FLAT_EPS && cycle.lots.length > 0) {
+  // Apply the flat tolerance to the entire position, not to individual lots.
+  while (remaining > 0 && cycle.lots.length > 0) {
     const index = method === "fifo" ? 0 : cycle.lots.length - 1;
     const lot = cycle.lots[index]!;
     const take = Math.min(lot.quantity, remaining);
     matchedNotional += take * lot.price;
     lot.quantity -= take;
     remaining -= take;
-    if (lot.quantity <= FLAT_EPS) cycle.lots.splice(index, 1);
+    if (lot.quantity === 0) cycle.lots.splice(index, 1);
   }
   return matchedNotional;
 };

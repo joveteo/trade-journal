@@ -1,12 +1,38 @@
 /** Minimal RFC 4180 CSV parser — quotes, escaped quotes, embedded newlines,
  * comma/semicolon/tab delimiters. No dependency, no streaming (statements are small). */
 
-export const detectDelimiter = (line: string): string => {
-  const candidates = [",", ";", "\t"];
+export const detectDelimiter = (text: string): string => {
+  const counts = new Map([
+    [",", 0],
+    [";", 0],
+    ["\t", 0],
+  ]);
+  let inQuotes = false;
+  let hasValue = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]!;
+    if (char === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        hasValue = true;
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (!inQuotes && (char === "\r" || char === "\n")) {
+      if (hasValue) break;
+      for (const delimiter of counts.keys()) counts.set(delimiter, 0);
+      continue;
+    }
+    const count = inQuotes ? undefined : counts.get(char);
+    if (count !== undefined) counts.set(char, count + 1);
+    else if (char.trim() !== "") hasValue = true;
+  }
+
   let best = ",";
-  let bestCount = -1;
-  for (const delimiter of candidates) {
-    const count = line.split(delimiter).length;
+  let bestCount = 0;
+  for (const [delimiter, count] of counts) {
     if (count > bestCount) {
       best = delimiter;
       bestCount = count;
@@ -17,8 +43,7 @@ export const detectDelimiter = (line: string): string => {
 
 export const parseCsv = (content: string, delimiter?: string): string[][] => {
   const text = content.replace(/^﻿/, "");
-  const firstLine = text.slice(0, text.indexOf("\n") === -1 ? text.length : text.indexOf("\n"));
-  const sep = delimiter ?? detectDelimiter(firstLine);
+  const sep = delimiter ?? detectDelimiter(text);
 
   const rows: string[][] = [];
   let row: string[] = [];
