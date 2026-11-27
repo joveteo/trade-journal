@@ -19,8 +19,8 @@ import { AI_PROVIDERS, AI_PROVIDER_NAMES, isAiProvider, type AiProvider } from "
 import { isTimeZone } from "@/lib/timezone";
 import { parseCurrencyConversion, type CurrencyConversion } from "@/lib/currencies";
 
-export const GET = handler((request?: Request) => {
-  if (request && new URL(request.url).searchParams.get("scope") === "timezone")
+export const GET = handler((request: Request) => {
+  if (new URL(request.url).searchParams.get("scope") === "timezone")
     return ok({ timeZone: getTimeZone() });
   return ok({
     timeZone: getTimeZone(),
