@@ -88,7 +88,9 @@ const metricsFromOverview = (
   const winningDays = days.filter((d) => d.netPnl > 0).length;
 
   // Streaks over closed trades in close order.
-  const ordered = [...closed].sort((a, b) => Date.parse(a.closedAt!) - Date.parse(b.closedAt!));
+  const ordered = [...closed].sort(
+    (a, b) => Date.parse(a.closedAt!) - Date.parse(b.closedAt!) || a.key.localeCompare(b.key),
+  );
   let maxWinStreak = 0;
   let maxLossStreak = 0;
   let run = 0;

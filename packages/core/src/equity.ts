@@ -115,7 +115,7 @@ export const relativeDrawdownCurve = (
 export const drawdown = (curve: EquityPoint[], initialBalance = 0): DrawdownStats => {
   let peak = 0;
   let maxDrawdown = 0;
-  let maxDrawdownPct: number | null = null;
+  let maxDrawdownPct: number | null = curve.length > 0 && initialBalance > 0 ? 0 : null;
   for (const point of curve) {
     if (point.cumNetPnl > peak) peak = point.cumNetPnl;
     const dd = peak - point.cumNetPnl;
