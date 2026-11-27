@@ -38,12 +38,13 @@ const wallClockAsUtc = (utcMs: number, timeZone: string): number => {
 };
 
 /** Interpret a naive wall-clock timestamp (UTC-ms encoding) as a moment in `timeZone`. */
-const naiveToUtc = (naiveUtcMs: number, timeZone: string): number => {
-  // Two-pass: guess offset at the naive instant, then re-check at the corrected instant
-  // so DST boundaries land right.
-  let guess = naiveUtcMs - (wallClockAsUtc(naiveUtcMs, timeZone) - naiveUtcMs);
-  guess = naiveUtcMs - (wallClockAsUtc(guess, timeZone) - guess);
-  return guess;
+const naiveToUtc = (naiveUtcMs: number, timeZone: string): number | null => {
+  const guess = naiveUtcMs - (wallClockAsUtc(naiveUtcMs, timeZone) - naiveUtcMs);
+  const wallClock = wallClockAsUtc(guess, timeZone);
+  if (wallClock === naiveUtcMs) return guess;
+  const corrected = guess + (naiveUtcMs - wallClock);
+  // Time skipped during a forward transition has no corresponding instant.
+  return wallClockAsUtc(corrected, timeZone) === naiveUtcMs ? corrected : null;
 };
 
 const MONTHS: Record<string, number> = {
@@ -193,7 +194,7 @@ export const parseTimestamp = (value: string | undefined, timeZone = "UTC"): str
   )
     return null;
   const utcMs = timeZone === "UTC" ? naiveUtcMs : naiveToUtc(naiveUtcMs, timeZone);
-  return new Date(utcMs).toISOString();
+  return utcMs === null ? null : new Date(utcMs).toISOString();
 };
 
 /** Combine separate date and time columns ("1/5/2026" + "14:30:05"). */
